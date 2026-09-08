@@ -330,6 +330,130 @@ class Coordinator:
                 mejor_por_pos[c.pos] = c
         return list(mejor_por_pos.values())
 
+
+    def _es_puerta_bottleneck(self, building, origen, destino, max_hops=8):
+            """
+            Nombre: _es_puerta_bottleneck
+            Descripcion: prueba de conectividad topologica (BFS, sin pesos)
+                        entre origen y destino EXCLUYENDO la arista directa
+                        que los conecta. Si no aparece ninguna ruta
+                        alternativa dentro de max_hops, esa puerta es la
+                        unica via razonable entre ambas zonas -> es un
+                        cuello de botella. Solo se considera intransitable
+                        el elemento 5 (pared exterior indestructible); todo
+                        lo demas (0,1,2,3,4) se admite como ruta alternativa
+                        posible, porque el criterio aqui es de TOPOLOGIA
+                        (existe o no otro camino), no de costo en AP.
+            Entradas: building (BuildingManager), origen, destino
+                    (tuple[int,int]), max_hops (int, default 8)
+            Salidas: bool -> True si no hay ruta alternativa cercana
+            Uso: llamado por scan_bottleneck_doors() una vez por cada puerta
+                cerrada encontrada.
+            """
+            directions = ["up", "down", "left", "right"]
+            visitado = {origen}
+            frontera = [origen]
+            hops = 0
+
+            while frontera and hops < max_hops:
+                siguiente = []
+                hops += 1
+                for (x, y) in frontera:
+                    for dir in directions:
+                        if (x, y) == origen and building.getNext(x, y, dir) == destino:
+                            continue  # excluye la arista que estamos probando
+                        if building.getDir(x, y, dir) == 5:
+                            continue
+                        next_pos = building.getNext(x, y, dir)
+                        if next_pos is None or next_pos in visitado:
+                            continue
+                        if next_pos == destino:
+                            return False  # ruta alterna encontrada
+                        visitado.add(next_pos)
+                        siguiente.append(next_pos)
+                frontera = siguiente
+
+            return True
+
+    def _contar_objetivos_relevantes(self, poi, fire, pos, radio=3):
+        """
+        Nombre: _contar_objetivos_relevantes
+        Descripcion: cuenta POIs sin revelar/victimas y celdas de fuego
+                    activo dentro de un radio Manhattan alrededor de
+                    pos. Sirve para descartar puertas-bottleneck que dan
+                    acceso a zonas sin nada urgente del otro lado -- no
+                    tiene caso mandar un agente a abrir una puerta que
+                    no lleva a ningun objetivo real.
+        Entradas: poi (PoiManager), fire (FireManager), pos
+                (tuple[int,int]), radio (int, default 3)
+        Salidas: int -> cantidad de objetivos relevantes cercanos
+        Uso: llamado por scan_bottleneck_doors() para ponderar prioridad.
+        """
+        x0, y0 = pos
+        count = 0
+        for x in range(max(0, x0 - radio), min(WIDTH, x0 + radio + 1)):
+            for y in range(max(0, y0 - radio), min(HEIGHT, y0 + radio + 1)):
+                if manhattan((x0, y0), (x, y)) > radio:
+                    continue
+                if poi.get(x, y) in (1, 3):
+                    count += 1
+                if fire.get(x, y) == 2:
+                    count += 1
+        return count
+
+    def scan_bottleneck_doors(self, poi, fire, building, ya_asignados):
+        """
+        Nombre: scan_bottleneck_doors
+        Descripcion: detecta puertas cerradas que son la unica conexion
+                    razonable entre dos zonas del tablero
+                    (_es_puerta_bottleneck) y que dan acceso a
+                    objetivos relevantes del otro lado
+                    (_contar_objetivos_relevantes). Genera un candidato
+                    en la celda DEL OTRO LADO de la puerta -- no en la
+                    puerta misma -- para que el pathfinding normal
+                    (a_star/dijkstra) atraviese y abra la puerta de
+                    camino, sin necesidad de logica adicional en
+                    Firefighter (_advance ya abre puertas cerradas que
+                    encuentra en su ruta).
+        Entradas: poi (PoiManager), fire (FireManager),
+                building (BuildingManager),
+                ya_asignados (set[tuple[int,int]])
+        Salidas: list[Candidate] -> tipo "abrir_puerta"
+        Uso: llamado por generate_candidates().
+        """
+        candidatos = []
+        directions = ["up", "down", "left", "right"]
+        procesadas = set()
+
+        for x in range(WIDTH):
+            for y in range(HEIGHT):
+                for dir in directions:
+                    if building.getDir(x, y, dir) != 4:
+                        continue
+                    next_pos = building.getNext(x, y, dir)
+                    if next_pos is None:
+                        continue
+
+                    clave = frozenset({(x, y), next_pos})
+                    if clave in procesadas:
+                        continue
+                    procesadas.add(clave)
+
+                    if next_pos in ya_asignados:
+                        continue
+
+                    if not self._es_puerta_bottleneck(building, (x, y), next_pos):
+                        continue
+
+                    relevancia = self._contar_objetivos_relevantes(poi, fire, next_pos)
+                    if relevancia == 0:
+                        continue
+
+                    prioridad = 6 + relevancia * 2
+                    candidatos.append(Candidate.Candidate(next_pos, "abrir_puerta", prioridad))
+
+        return candidatos
+
     def generate_candidates(self, poi, fire, building, ya_asignados):
         """
         Nombre: generate_candidates
@@ -351,6 +475,7 @@ class Coordinator:
             + self.scan_breach_points(poi, fire, building, ya_asignados)
             + self.scan_chain_breaks(fire, building, ya_asignados)
             + self.scan_general_fire(fire, building, ya_asignados)
+            + self.scan_bottleneck_doors(poi, fire, building, ya_asignados)
         )
         candidatos = self._apply_density_bonus(candidatos, fire)
         return self._deduplicar_candidatos(candidatos)
