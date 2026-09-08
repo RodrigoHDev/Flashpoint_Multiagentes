@@ -161,3 +161,48 @@ def reconstruct_path(came_from, current):
           path.append(current)
       path.reverse()
       return path
+
+def dijkstra_from(start, building, fire):
+    """
+    Nombre: dijkstra_from
+    Descripcion: calcula, desde una unica celda origen, el costo
+                 minimo (en AP) hacia TODAS las celdas alcanzables
+                 del tablero, usando la misma funcion de costo de
+                 arista que a_star (edge_cost). Al no tener un
+                 destino fijo no hay heuristica que aplicar: se
+                 expande por costo acumulado (Dijkstra clasico).
+    Entradas: start (tuple[int,int]), building (BuildingManager),
+              fire (FireManager)
+    Salidas: dict {tuple[int,int]: float} -> costo minimo desde
+             start hacia cada celda alcanzada. Celdas no alcanzables
+             simplemente no aparecen en el dict.
+    Uso: pensado para reemplazar, por agente, las C llamadas a
+         a_star() dentro de build_cost_matrix() por una sola
+         corrida que despues se consulta por candidato.
+    """
+    g_score = {start: 0}
+    visited = set()
+    open_set = [(0, start)]
+
+    while open_set:
+        dist, current = heapq.heappop(open_set)
+
+        if current in visited:
+            continue
+        visited.add(current)
+
+        for dir in ["up", "down", "left", "right"]:
+            neighbor = building.getNext(current[0], current[1], dir)
+            if neighbor is None or neighbor in visited:
+                continue
+
+            cost = edge_cost(building, fire, current[0], current[1], dir, neighbor)
+            if cost == float("inf"):
+                continue
+
+            tentative_g = dist + cost
+            if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                g_score[neighbor] = tentative_g
+                heapq.heappush(open_set, (tentative_g, neighbor))
+
+    return g_score

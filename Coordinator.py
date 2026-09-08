@@ -1,6 +1,6 @@
 import Candidate
 import numpy as np
-from auxiliars import triage_factor, a_star, manhattan, FIRE_CANDIDATE_TYPES
+from auxiliars import triage_factor, a_star, manhattan, FIRE_CANDIDATE_TYPES, dijkstra_from
 
 WIDTH, HEIGHT = 10, 8
 
@@ -384,16 +384,13 @@ class Coordinator:
         triage = triage_factor(building, fire)
         matriz = {}
         for agente in agentes:
+            costs = dijkstra_from(agente.pos, building, fire)
             for candidato in candidatos:
-                path, costo = a_star(agente.pos, candidato.pos, building, fire)
-                if path is None:
-                    matriz[(agente, candidato)] = float("inf")
-                    continue
-                costo_distancia = costo
+                costo = costs[candidato.pos]
                 prioridad = max(candidato.prioridad, 0.01) 
                 if candidato.tipo in FIRE_CANDIDATE_TYPES:
                     prioridad *= triage
-                matriz[(agente, candidato)] = costo_distancia / prioridad
+                matriz[(agente, candidato)] = costo / prioridad
         return matriz
 
     def _explorar(self, agentes_restantes, candidatos_restantes, matriz, mejor, asignacion_actual, costo_actual):
