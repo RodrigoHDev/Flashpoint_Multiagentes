@@ -1,5 +1,5 @@
 import mesa
-from auxiliars import triage_factor, nearest_target, a_star, greedy_direction, get_next_step_direction
+from auxiliars import triage_factor, nearest_target, a_star, greedy_direction, get_next_step_direction, best_exit_by_cost
 
 
 class Firefighter(mesa.Agent):
@@ -594,7 +594,7 @@ class Firefighter(mesa.Agent):
 
             if self.victim:
                 # PRIORIDAD ABSOLUTA
-                target = nearest_target(self.pos, self.exits)
+                target = best_exit_by_cost(self.pos, self.exits, self.building, self.fire)
                 if target is None:
                     break
 

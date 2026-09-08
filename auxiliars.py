@@ -206,3 +206,30 @@ def dijkstra_from(start, building, fire):
                 heapq.heappush(open_set, (tentative_g, neighbor))
 
     return g_score
+
+def best_exit_by_cost(pos, exits, building, fire):
+    """
+    Nombre: best_exit_by_cost
+    Descripcion: evalua el costo REAL (via a_star, considerando
+                 paredes, puertas y fuego) hacia cada salida
+                 disponible y regresa la de menor costo. A
+                 diferencia de nearest_target (Manhattan), esto
+                 evita elegir una salida geometricamente cercana
+                 pero bloqueada por fuego/paredes cuando otra salida
+                 mas lejana en linea recta es en realidad mas barata
+                 de alcanzar.
+    Entradas: pos (tuple[int,int]), exits (list[tuple[int,int]]),
+              building (BuildingManager), fire (FireManager)
+    Salidas: tuple[int,int] o None -> la salida de menor costo
+             alcanzable, o None si ninguna es alcanzable
+    Uso: pensado para reemplazar nearest_target(self.pos, self.exits)
+         en Firefighter._act_optimized() cuando self.victim es True.
+    """
+    mejor = None
+    mejor_costo = float("inf")
+    for salida in exits:
+        _, costo = a_star(pos, salida, building, fire)
+        if costo < mejor_costo:
+            mejor_costo = costo
+            mejor = salida
+    return mejor
