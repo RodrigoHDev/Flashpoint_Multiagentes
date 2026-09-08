@@ -35,7 +35,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import GameManager
-from export_simulation import frame_from_model
 
 app = FastAPI(title="Flashpoint Bridge")
 
@@ -70,21 +69,25 @@ def _build_response(model):
     """
     Name: _build_response
     Description: Builds the JSON body returned by every endpoint that
-                 touches the game: the same frame shape Unity already
-                 parses (see export_simulation.frame_from_model), plus
-                 3 extra fields Unity uses to know when to stop asking
-                 for more turns. JsonUtility on the Unity side ignores
-                 fields it doesn't recognize, so this is safe to feed
-                 straight into GameManager.ApplyGameUpdate(json) as-is.
+                 touches the game. Uses GameManager.to_dict() directly
+                 -- Unity's MapGenerator/AgentManager/MovementPlayer
+                 were built against exactly that shape (tiles with
+                 agentIds, top-level agents[], top-level movements[]),
+                 so this must stay a straight passthrough rather than
+                 a hand-rolled reshaping of the state. Adds 3 fields
+                 Unity uses to know when to stop asking for more turns
+                 (JsonUtility ignores fields it doesn't recognize, so
+                 this is safe to feed straight into
+                 GameManager.ApplyGameUpdate(json) on the Unity side).
     Inputs: model (GameManager)
-    Outputs: dict -> frame + {gameOver, win, loseReason}
+    Outputs: dict -> to_dict() + {gameOver, win, loseReason}
     Usage: called by every route handler below.
     """
-    frame = frame_from_model(model)
-    frame["gameOver"] = model.win() or model.lose()
-    frame["win"] = model.win()
-    frame["loseReason"] = model.get_lose_reason()
-    return frame
+    data = model.to_dict()
+    data["gameOver"] = model.win() or model.lose()
+    data["win"] = model.win()
+    data["loseReason"] = model.get_lose_reason()
+    return data
 
 
 def _require_game():
