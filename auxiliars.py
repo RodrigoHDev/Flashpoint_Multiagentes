@@ -3,7 +3,25 @@ Title: Auxiliars
 Author: Rodrigo Hurtado
 Description:
 
-Colelction of common functions used among more than one class that go in more than one category.
+Collection of common functions used among more than one class that go in more than one category.
+
+Functions:
+TRIAGE
+triage_factors
+
+PRIMITIVE METHODS
+get_next_step_direction
+greedy_direction
+nearest_target
+manhattan
+
+PATH FINDING
+edge_cost
+a_star
+reconstruct_path
+dijkstra_from
+best_exit_by_cost
+
 """
 
 #------------------------------ TRIAGE ---------------------------------
@@ -243,11 +261,11 @@ def best_exit_by_cost(pos, exits, building, fire):
         Usage: Used in act_optimized to move victim once carried by the
                 agent.
     """
-    mejor = None
-    mejor_costo = float("inf")
-    for salida in exits:
-        _, costo = a_star(pos, salida, building, fire)
-        if costo < mejor_costo:
-            mejor_costo = costo
-            mejor = salida
-    return mejor
+    best = None
+    best_cost = float("inf")
+    for exit in exits:
+        _, best = a_star(pos, exit, building, fire)
+        if best < best_cost:
+            best_cost = best
+            best = exit
+    return best

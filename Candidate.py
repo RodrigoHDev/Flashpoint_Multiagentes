@@ -1,30 +1,53 @@
+"""
+Title: Candidate
+Author: Rodrigo Hurtado
+Description:
+
+Represents something an agent could go attend to: a POI, a fire
+threat near a POI, or general fire/smoke. It is not an action yet,
+just an "this exists and is this urgent".
+
+Functions:
+CONSTRUCTOR
+__init__
+
+REPRESENTATION
+__repr__
+
+"""
+
 class Candidate:
     """
-    Representa algo que un agente podria ir a atender: un POI, una
-    amenaza de fuego cerca de un POI, o fuego/humo general. No es
-    una accion todavia, solo un "esto existe y asi de urgente es".
+    Represents something an agent could go attend to: a POI, a fire
+    threat near a POI, or general fire/smoke. It is not an action
+    yet, just an "this exists and is this urgent".
     """
 
-    def __init__(self, pos, tipo, prioridad):
+    #------------------------------ CONSTRUCTOR ---------------------------------
+
+    def __init__(self, pos, type, priority):
         """
-        Nombre: __init__
-        Descripcion: crea un candidato con su posicion, tipo y
-                     prioridad numerica (mayor = mas urgente).
-        Entradas: pos (tuple[int,int]), tipo (str), prioridad (int)
-        Salidas: ninguna (constructor)
-        Uso: instanciado por las funciones scan_* del Coordinator.
+        Name: __init__
+        Description: Creates a candidate with its position, type,
+                    and numeric priority (higher = more urgent).
+        Inputs: pos (tuple[int,int]), type (str), priority (int)
+        Outputs: none (constructor)
+        Usage: instantiated by the scan_* functions of the
+            Coordinator.
         """
         self.pos = pos
-        self.tipo = tipo
-        self.prioridad = prioridad
+        self.type = type
+        self.priority = priority
+
+    #------------------------------ REPRESENTATION ---------------------------------
 
     def __repr__(self):
         """
-        Nombre: __repr__
-        Descripcion: representacion legible para depuracion/logs.
-        Entradas: ninguna
-        Salidas: str
-        Uso: usado automaticamente por print()/logs cuando se
-             imprime una lista de candidatos.
+        Name: __repr__
+        Description: Readable representation for debugging/logs.
+        Inputs: none
+        Outputs: str
+        Usage: used automatically by print()/logs when printing a
+            list of candidates.
         """
-        return f"Candidate(pos={self.pos}, tipo={self.tipo}, prioridad={self.prioridad})"
+        return f"Candidate(pos={self.pos}, type={self.type}, priority={self.priority})"

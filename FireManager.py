@@ -1,3 +1,37 @@
+"""
+Title: FireManager
+Author: Rodrigo Hurtado
+Description:
+
+Manages the fire/smoke state of the board (fireGrid). Cell values:
+0=empty, 1=smoke, 2=fire. Depends on BuildingManager (walls/doors)
+and PoiManager (to know whether a POI must be destroyed when its
+cell catches fire), plus the list of agents (to apply knockdown).
+
+Functions:
+SETUP
+__init__
+link
+
+QUERY
+get
+getNeighborhoodFire
+
+STATE TRANSITIONS
+turnToFire
+turnToSmoke
+turnOff
+
+TURN CYCLE
+putSmoke
+
+EXPLOSION PROPAGATION
+_propagate
+explotion
+shockwave
+
+"""
+
 import numpy as np
 import Dice
 
@@ -5,22 +39,24 @@ WIDTH, HEIGHT = 10, 8
 
 class FireManager:
     """
-    Administra el estado de fuego/humo del tablero (fireGrid).
-    Valores por celda: 0=vacio, 1=humo, 2=fuego.
-    Depende de BuildingManager (paredes/puertas) y PoiManager
-    (para saber si un POI debe destruirse al incendiarse su celda),
-    ademas de la lista de agentes (para aplicar knockdown).
+    Manages the fire/smoke state of the board (fireGrid). Cell
+    values: 0=empty, 1=smoke, 2=fire. Depends on BuildingManager
+    (walls/doors) and PoiManager (to know whether a POI must be
+    destroyed when its cell catches fire), plus the list of agents
+    (to apply knockdown).
     """
+
+    #------------------------------ SETUP ---------------------------------
 
     def __init__(self):
         """
-        Nombre: __init__
-        Descripcion: crea el grid de fuego en ceros y coloca el fuego
-                     inicial de la partida en las posiciones fijas
-                     acordadas para este mapa.
-        Entradas: ninguna
-        Salidas: ninguna (constructor)
-        Uso: instanciado una vez dentro de GameManager.__init__.
+        Name: __init__
+        Description: Creates the fire grid at zero and places the
+                     game's initial fire at the fixed positions
+                     agreed upon for this map.
+        Inputs: none
+        Outputs: none (constructor)
+        Usage: instantiated once inside GameManager.__init__.
         """
         self.fireGrid = np.zeros((WIDTH, HEIGHT), dtype=np.int8)
         fire_positions = [
@@ -37,43 +73,124 @@ class FireManager:
 
     def link(self, buildingManager, poiManager, agents):
         """
-        Nombre: link
-        Descripcion: inyecta las referencias cruzadas necesarias para
-                     operar (patron de dos fases, evita dependencia
-                     circular en el constructor).
-        Entradas: buildingManager (BuildingManager), poiManager
-                  (PoiManager), agents (list[Firefighter])
-        Salidas: ninguna
-        Uso: llamado una vez desde GameManager.__init__, justo
-             despues de instanciar los tres managers.
+        Name: link
+        Description: Injects the necessary cross-references to
+                     operate (two-phase pattern, avoids a circular
+                     dependency in the constructor).
+        Inputs: buildingManager (BuildingManager), poiManager
+                (PoiManager), agents (list[Firefighter])
+        Outputs: none
+        Usage: called once from GameManager.__init__, right after
+               instantiating the three managers.
         """
         self.building = buildingManager
         self.poi = poiManager
         self.agents = agents
 
+    #------------------------------ QUERY ---------------------------------
+
     def get(self, x, y):
         """
-        Nombre: get
-        Descripcion: consulta que hay en una celda del grid de fuego.
-        Entradas: x, y (int)
-        Salidas: int -> 0 (vacio), 1 (humo), 2 (fuego)
-        Uso: llamado extensamente por Firefighter (decidir accion),
-             PoiManager.set() (verificar si limpiar fuego al insertar
-             POI), y por este mismo manager en su logica interna.
+        Name: get
+        Description: Queries what is in a cell of the fire grid.
+        Inputs: x, y (int)
+        Outputs: int -> 0 (empty), 1 (smoke), 2 (fire)
+        Usage: called extensively by Firefighter (to decide an
+               action), PoiManager.set() (to check whether to clear
+               fire when inserting a POI), and by this same manager
+               in its internal logic.
         """
         return self.fireGrid[x, y]
 
+    def getNeighborhoodFire(self, x, y):
+        """
+        Name: getNeighborhoodFire
+        Description: Checks the 4 directions around a cell and
+                     returns the neighboring positions that have
+                     fire, respecting walls/closed doors in between.
+        Inputs: x, y (int)
+        Outputs: list[tuple[int,int]] -> neighboring positions with
+                 fire
+        Usage: called by putSmoke() to decide whether an empty cell
+               should turn into fire (if there is adjacent fire) or
+               into smoke (if there isn't).
+        """
+        directions = ["up", "down", "left", "right"]
+        tuplas = []
+
+        for dir in directions:
+            element = self.building.getDir(x, y, dir)
+            if element == 0 or element == 3:
+                next_pos = self.building.getNext(x, y, dir)
+                if next_pos is not None:
+                    x_, y_ = next_pos
+                    fire = self.get(x_, y_)
+                    if fire == 2:
+                        tuplas.append((x_, y_))
+
+        return tuplas
+
+    #------------------------------ STATE TRANSITIONS ---------------------------------
+
+    def turnToFire(self, x, y):
+        """
+        Name: turnToFire
+        Description: Turns a cell into fire. Applies knockdown to
+                     any agent standing there, and destroys any POI
+                     present in that cell.
+        Inputs: x, y (int)
+        Outputs: none
+        Usage: called by putSmoke(), _propagate(), and shockwave()
+               as a consequence of fire propagation.
+        """
+        for agent in self.agents:
+            if agent.pos[0] == x and agent.pos[1] == y:
+                agent.setKnockdown(True)
+
+        if self.poi.get(x, y) > 0:
+            self.poi.destroy(x, y)
+
+        self.fireGrid[x, y] = 2
+
+    def turnToSmoke(self, x, y):
+        """
+        Name: turnToSmoke
+        Description: Marks a cell as smoke.
+        Inputs: x, y (int)
+        Outputs: none
+        Usage: called by putSmoke() when an empty cell has no
+               adjacent fire; and by Firefighter.turnFireToSmoke()
+               as the effect of the firefighter's action.
+        """
+        self.fireGrid[x, y] = 1
+
+    def turnOff(self, x, y):
+        """
+        Name: turnOff
+        Description: Clears a cell (fire or smoke), leaving it
+                     empty.
+        Inputs: x, y (int)
+        Outputs: none
+        Usage: called by PoiManager.set() when inserting a POI on
+               top of fire, and by Firefighter.turnFireToNothing() /
+               turnSmokeToNothing() as the effect of the
+               firefighter's action.
+        """
+        self.fireGrid[x, y] = 0
+
+    #------------------------------ TURN CYCLE ---------------------------------
+
     def putSmoke(self):
         """
-        Nombre: putSmoke
-        Descripcion: rolea el dado propio y aplica la regla de
-                     avance de fuego sobre la celda resultante:
-                     vacia+fuego adyacente->fuego, vacia sin fuego
-                     cerca->humo, humo->fuego, fuego->explosion.
-        Entradas: ninguna
-        Salidas: ninguna
-        Uso: llamado una vez por cada turno completo de agente,
-             desde GameManager.step_agent().
+        Name: putSmoke
+        Description: Rolls its own dice and applies the fire
+                     advancement rule to the resulting cell:
+                     empty+adjacent fire->fire, empty with no fire
+                     nearby->smoke, smoke->fire, fire->explosion.
+        Inputs: none
+        Outputs: none
+        Usage: called once per complete agent turn, from
+               GameManager.step_agent().
         """
         x_, y_ = self.dice.roll()
         print(f"Put smoke at {x_}, {y_}")
@@ -94,90 +211,21 @@ class FireManager:
             self.explotion(x_, y_)
             print(f"Explotion erupted at {x_}, {y_}")
 
-    def turnToFire(self, x, y):
-        """
-        Nombre: turnToFire
-        Descripcion: convierte una celda en fuego. Aplica knockdown a
-                     cualquier agente parado ahi, y destruye cualquier
-                     POI presente en esa celda.
-        Entradas: x, y (int)
-        Salidas: ninguna
-        Uso: llamado por putSmoke(), _propagate() y shockwave() como
-             consecuencia de propagacion de fuego.
-        """
-        for agent in self.agents:
-            if agent.pos[0] == x and agent.pos[1] == y:
-                agent.setKnockdown(True)
-
-        if self.poi.get(x, y) > 0:
-            self.poi.destroy(x, y)
-
-        self.fireGrid[x, y] = 2
-
-    def turnToSmoke(self, x, y):
-        """
-        Nombre: turnToSmoke
-        Descripcion: marca una celda como humo.
-        Entradas: x, y (int)
-        Salidas: ninguna
-        Uso: llamado por putSmoke() cuando una celda vacia no tiene
-             fuego adyacente; y por Firefighter.turnFireToSmoke()
-             como efecto de la accion del bombero.
-        """
-        self.fireGrid[x, y] = 1
-
-    def turnOff(self, x, y):
-        """
-        Nombre: turnOff
-        Descripcion: limpia una celda (fuego o humo) dejandola vacia.
-        Entradas: x, y (int)
-        Salidas: ninguna
-        Uso: llamado por PoiManager.set() al insertar un POI sobre
-             fuego, y por Firefighter.turnFireToNothing() /
-             turnSmokeToNothing() como efecto de la accion del bombero.
-        """
-        self.fireGrid[x, y] = 0
-
-    def getNeighborhoodFire(self, x, y):
-        """
-        Nombre: getNeighborhoodFire
-        Descripcion: revisa las 4 direcciones alrededor de una celda
-                     y regresa las posiciones vecinas que tienen fuego,
-                     respetando paredes/puertas cerradas de por medio.
-        Entradas: x, y (int)
-        Salidas: list[tuple[int,int]] -> posiciones vecinas con fuego
-        Uso: llamado por putSmoke() para decidir si una celda vacia
-             debe convertirse en fuego (si hay fuego adyacente) o
-             en humo (si no lo hay).
-        """
-        directions = ["up", "down", "left", "right"]
-        tuplas = []
-
-        for dir in directions:
-            element = self.building.getDir(x, y, dir)
-            if element == 0 or element == 3:
-                next_pos = self.building.getNext(x, y, dir)
-                if next_pos is not None:
-                    x_, y_ = next_pos
-                    fire = self.get(x_, y_)
-                    if fire == 2:
-                        tuplas.append((x_, y_))
-
-        return tuplas
+    #------------------------------ EXPLOSION PROPAGATION ---------------------------------
 
     def _propagate(self, x, y, dir):
         """
-        Nombre: _propagate
-        Descripcion: aplica el efecto de una explosion/onda de choque
-                     en UNA direccion: si el camino esta libre y la
-                     celda siguiente no tiene fuego, la incendia (o
-                     dispara una shockwave si ya tenia fuego); si hay
-                     pared/puerta en el camino, la daña.
-        Entradas: x, y (int), dir (str)
-        Salidas: ninguna
-        Uso: llamado por explotion() (una vez por cada una de las 4
-             direcciones) y por shockwave() (al llegar al final de
-             la cadena de fuego).
+        Name: _propagate
+        Description: Applies the effect of an explosion/shockwave in
+                     ONE direction: if the path is clear and the next
+                     cell has no fire, it ignites it (or triggers a
+                     shockwave if it already had fire); if there is a
+                     wall/door in the way, damages it.
+        Inputs: x, y (int), dir (str)
+        Outputs: none
+        Usage: called by explotion() (once for each of the 4
+               directions) and by shockwave() (upon reaching the end
+               of the fire chain).
         """
         element = self.building.getDir(x, y, dir)
 
@@ -199,13 +247,13 @@ class FireManager:
 
     def explotion(self, x, y):
         """
-        Nombre: explotion
-        Descripcion: aplica una explosion completa (las 4 direcciones)
-                     sobre una celda que ya tenia fuego.
-        Entradas: x, y (int)
-        Salidas: ninguna
-        Uso: llamado por putSmoke() cuando el dado cae sobre una
-             celda que ya estaba en fuego.
+        Name: explotion
+        Description: Applies a full explosion (all 4 directions) on
+                     a cell that already had fire.
+        Inputs: x, y (int)
+        Outputs: none
+        Usage: called by putSmoke() when the dice lands on a cell
+               that was already on fire.
         """
         directions = ["right", "left", "up", "down"]
         for dir in directions:
@@ -213,15 +261,15 @@ class FireManager:
 
     def shockwave(self, x, y, dir):
         """
-        Nombre: shockwave
-        Descripcion: avanza en una direccion mientras el camino este
-                     libre/puerta abierta y la siguiente celda tenga
-                     fuego, hasta llegar a la ultima celda en llamas
-                     de esa cadena, y ahi aplica _propagate.
-        Entradas: x, y (int), dir (str)
-        Salidas: ninguna
-        Uso: llamado por _propagate() cuando una explosion choca con
-             una celda que ya tenia fuego (efecto domino).
+        Name: shockwave
+        Description: Advances in a direction while the path is
+                     clear/an open door and the next cell has fire,
+                     until reaching the last burning cell of that
+                     chain, and applies _propagate there.
+        Inputs: x, y (int), dir (str)
+        Outputs: none
+        Usage: called by _propagate() when an explosion hits a cell
+               that already had fire (domino effect).
         """
         while True:
             next_pos = self.building.getNext(x, y, dir)

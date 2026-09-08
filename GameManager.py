@@ -1,3 +1,50 @@
+"""
+Title: GameManager
+Author: Rodrigo Hurtado
+Description:
+
+Central orchestrator of the game (Mesa Model). Instantiates and
+connects the three managers (fire, POI, building), creates the
+firefighters, runs the turn cycle, and evaluates win/lose
+conditions. Also exposes the full game state for external
+consumption (console, animation, or eventually Unity).
+
+Functions:
+CONSTRUCTOR
+__init__
+
+AGENT SETUP
+_create_agents
+_entry_position
+
+TURN CYCLE
+step_agent
+step
+
+WIN/LOSE CONDITIONS
+win
+lose
+get_lose_reason
+
+SIMULATION RUNNER
+run_limited
+_print_turn_summary
+_debug_print
+
+STEP RECORDING
+record_step
+
+SNAPSHOTS & SERIALIZATION
+capture_snapshot
+_tile_to_dict
+to_dict
+
+FOCUS CONTROL
+set_focus
+clear_focus
+
+"""
+
 import FireManager
 import PoiManager
 import mesa
@@ -9,37 +56,39 @@ WIDTH, HEIGHT = 10, 8
 
 class GameManager(mesa.Model):
     """
-    Orquestador central de la partida (Mesa Model). Instancia y
-    conecta los tres managers (fuego, POI, edificio), crea a los
-    bomberos, corre el ciclo de turnos, y evalua las condiciones de
-    victoria/derrota. Tambien expone el estado completo del juego
-    para consumo externo (consola, animacion, o eventualmente Unity).
+    Central orchestrator of the game (Mesa Model). Instantiates and
+    connects the three managers (fire, POI, building), creates the
+    firefighters, runs the turn cycle, and evaluates win/lose
+    conditions. Also exposes the full game state for external
+    consumption (console, animation, or eventually Unity).
     """
+
+    #------------------------------ CONSTRUCTOR ---------------------------------
 
     def __init__(self, num_firefighters=6, seed=None, strategy="optimized"):
         """
-        Nombre: __init__
-        Descripcion: crea los tres managers, el grid de Mesa, la
-                     lista de agentes y las entradas del edificio, y
-                     conecta (link) las referencias cruzadas entre
-                     managers. No crea los agentes automaticamente
-                     (requiere llamar _crear_agentes por separado).
-        Entradas: num_firefighters (int, default 6), seed (int o None,
-                  semilla del generador aleatorio de Mesa)
-        Salidas: ninguna (constructor)
-        Uso: punto de entrada para iniciar una partida nueva, p.ej.
-             `model = GameManager(num_firefighters=6, seed=42)`.
+        Name: __init__
+        Description: Creates the three managers, the Mesa grid, the
+                     agent list, and the building entrances, and
+                     links the cross-references between managers.
+                     Does not create the agents automatically
+                     (requires calling _create_agents separately).
+        Inputs: num_firefighters (int, default 6), seed (int or
+                None, Mesa's random generator seed)
+        Outputs: none (constructor)
+        Usage: entry point to start a new game, e.g.
+               `model = GameManager(num_firefighters=6, seed=42)`.
         """
         super().__init__(seed=seed)
         self.turn = 0
         self.atomic_step_counter = 0 # Initialize a counter for atomic steps
         self.focus = -1
-        # MERGE: lista de deltas ("movements") acumulados desde el
-        # ultimo to_dict(). Reemplaza el esquema anterior de
-        # record_step(), que guardaba un snapshot COMPLETO del
-        # estado en cada paso atomico -- costoso de generar y de
-        # transmitir cuando el consumidor externo (p.ej. Unity) solo
-        # necesita saber que cambio, no todo el tablero de nuevo.
+        # MERGE: list of deltas ("movements") accumulated since the
+        # last to_dict(). Replaces the previous record_step() scheme,
+        # which stored a FULL snapshot of the state on every atomic
+        # step -- expensive to generate and to transmit when the
+        # external consumer (e.g. Unity) only needs to know what
+        # changed, not the whole board again.
         self.movements = []
 
         self.buildingManager = BuildingManager.BuildingManager()
@@ -77,38 +126,41 @@ class GameManager(mesa.Model):
             },
         )
 
-        self._crear_agentes(num_firefighters, strategy)
+        self._create_agents(num_firefighters, strategy)
 
-    def _crear_agentes(self, num_firefighters, strategy="optimized"):
+    #------------------------------ AGENT SETUP ---------------------------------
+
+    def _create_agents(self, num_firefighters, strategy="optimized"):
         """
-        Nombre: _crear_agentes
-        Descripcion: crea num_firefighters bomberos, los coloca en el
-                     grid segun _posicion_entrada(), les inyecta las
-                     referencias via link(), y los agrega a agentsList.
-        Entradas: num_firefighters (int)
-        Salidas: ninguna
-        Uso: debe llamarse manualmente despues de __init__ para
-             poblar la partida (no se llama automaticamente).
+        Name: _create_agents
+        Description: Creates num_firefighters firefighters, places
+                     them on the grid according to
+                     _entry_position(), injects their references
+                     via link(), and adds them to agentsList.
+        Inputs: num_firefighters (int)
+        Outputs: none
+        Usage: must be called manually after __init__ to populate
+               the game (not called automatically).
         """
         for _ in range(num_firefighters):
-            x, y = self._posicion_entrada()
+            x, y = self._entry_position()
             agente = Firefighter.Firefighter(self)
             agente.strategy = strategy
             self.grid.place_agent(agente, (x, y))
             agente.link(self.buildingManager, self.poiManager, self.fireManager, self.entradas)
             self.agentsList.append(agente)
 
-    def _posicion_entrada(self):
+    def _entry_position(self):
         """
-        Nombre: _posicion_entrada
-        Descripcion: decide en cual de las 4 entradas del edificio
-                     colocar al proximo bombero, siguiendo una
-                     distribucion fija para 6 bomberos (2/2/1/1), con
-                     reparto ciclico como respaldo si el numero
-                     difiere de 6.
-        Entradas: ninguna (usa len(self.agentsList) como indice)
-        Salidas: tuple[int,int] -> coordenada de entrada elegida
-        Uso: llamado por _crear_agentes() una vez por cada bombero.
+        Name: _entry_position
+        Description: Decides which of the 4 building entrances to
+                     place the next firefighter at, following a
+                     fixed distribution for 6 firefighters (2/2/1/1),
+                     with cyclic distribution as a fallback if the
+                     number differs from 6.
+        Inputs: none (uses len(self.agentsList) as index)
+        Outputs: tuple[int,int] -> chosen entrance coordinate
+        Usage: called by _create_agents() once per firefighter.
         """
         index = len(self.agentsList)
         distribucion = [0, 0, 1, 1, 2, 3]
@@ -118,25 +170,27 @@ class GameManager(mesa.Model):
 
         return self.entradas[index % len(self.entradas)]
 
+    #------------------------------ TURN CYCLE ---------------------------------
+
     def step_agent(self, agent) -> bool:
         """
-        Nombre: step_agent
-        Descripcion: ejecuta el turno completo de un agente (act()),
-                     seguido del avance de fuego (putSmoke()) y la
-                     reposicion de POIs (set()). Verifica win/lose
-                     antes de actuar.
-        Entradas: agent (Firefighter)
-        Salidas: bool -> True si el juego ya termino (win o lose),
-                 False si debe continuar
-        Uso: llamado por step() y run_limited() una vez por agente,
-             por cada ronda de turnos.
+        Name: step_agent
+        Description: Executes an agent's full turn (act()), followed
+                     by fire advancement (putSmoke()) and POI
+                     replenishment (set()). Checks win/lose before
+                     acting.
+        Inputs: agent (Firefighter)
+        Outputs: bool -> True if the game has already ended (win or
+                 lose), False if it should continue
+        Usage: called by step() and run_limited() once per agent, on
+               every round of turns.
         """
         if self.lose():
             return True
         if self.win():
             return True
 
-        self.coordinator.coordinate_turn(     # <- NUEVO, antes de que actue
+        self.coordinator.coordinate_turn(     # <- NEW, before it acts
           self.agentsList, self.poiManager, self.fireManager, self.buildingManager
         )
 
@@ -147,26 +201,26 @@ class GameManager(mesa.Model):
 
     def step(self):
         """
-        Nombre: step
-        Descripcion: avanza la simulacion EXACTAMENTE un turno
-                     individual (un solo agente, no una ronda
-                     completa), turnando round-robin por agentsList.
-                     Esta es la convencion que mesa.batch_run()
-                     necesita: llama a model.step() repetidamente,
-                     una vez por "paso". Por eso este metodo debe
-                     siempre (a) incrementar self.steps -- el
-                     contador NATIVO de Mesa (distinto de self.turn),
-                     que batch_run usa para el limite max_steps -- y
-                     (b) llamar self.datacollector.collect(self) al
-                     final, sin excepcion -- de lo contrario
-                     batch_run no tiene ninguna fila que reportar,
-                     que es exactamente el problema detectado.
-        Entradas: ninguna
-        Salidas: ninguna
-        Uso: llamado automaticamente por mesa.batch_run() una vez por
-             paso (max_steps en batch_run = turnos individuales,
-             igual que en run_limited). Tambien se puede llamar
-             manualmente: `while model.running: model.step()`.
+        Name: step
+        Description: Advances the simulation EXACTLY one individual
+                     turn (a single agent, not a full round), taking
+                     turns round-robin through agentsList. This is
+                     the convention mesa.batch_run() needs: it calls
+                     model.step() repeatedly, once per "step". That's
+                     why this method must always (a) increment
+                     self.steps -- Mesa's NATIVE counter (distinct
+                     from self.turn), which batch_run uses for the
+                     max_steps limit -- and (b) call
+                     self.datacollector.collect(self) at the end,
+                     without exception -- otherwise batch_run has no
+                     row to report, which is exactly the problem that
+                     was detected.
+        Inputs: none
+        Outputs: none
+        Usage: called automatically by mesa.batch_run() once per step
+               (max_steps in batch_run = individual turns, same as in
+               run_limited). Can also be called manually:
+               `while model.running: model.step()`.
         """
         if not self.running:
             return
@@ -177,18 +231,19 @@ class GameManager(mesa.Model):
         self.turn += 1
 
         self.step_agent(agent)
-
         self.datacollector.collect(self)
+
+    #------------------------------ WIN/LOSE CONDITIONS ---------------------------------
 
     def win(self) -> bool:
         """
-        Nombre: win
-        Descripcion: evalua si se cumplio la condicion de victoria
-                     (7 o mas victimas salvadas).
-        Entradas: ninguna
-        Salidas: bool
-        Uso: llamado por step_agent(), step() y run_limited() antes
-             de cada accion, para detener la partida a tiempo.
+        Name: win
+        Description: Evaluates whether the win condition was met (7
+                     or more victims saved).
+        Inputs: none
+        Outputs: bool
+        Usage: called by step_agent(), step(), and run_limited()
+               before every action, to stop the game in time.
         """
         if self.poiManager.getVictimsSaved() >= 7:
             self.running = False
@@ -197,14 +252,14 @@ class GameManager(mesa.Model):
 
     def lose(self) -> bool:
         """
-        Nombre: lose
-        Descripcion: evalua si se cumplio alguna condicion de derrota
-                     (4 o mas victimas perdidas, o 24 o mas puntos de
-                     daño estructural acumulado).
-        Entradas: ninguna
-        Salidas: bool
-        Uso: llamado por step_agent(), step() y run_limited() antes
-             de cada accion, para detener la partida a tiempo.
+        Name: lose
+        Description: Evaluates whether any lose condition was met (4
+                     or more victims lost, or 24 or more accumulated
+                     structural damage points).
+        Inputs: none
+        Outputs: bool
+        Usage: called by step_agent(), step(), and run_limited()
+               before every action, to stop the game in time.
         """
         if self.poiManager.getVictimsLost() >= 4:
             self.running = False
@@ -217,19 +272,18 @@ class GameManager(mesa.Model):
 
     def get_lose_reason(self):
         """
-        Nombre: get_lose_reason
-        Descripcion: determina la causa de derrota segun el estado
-                     actual, sin efectos secundarios (a diferencia de
-                     lose(), no toca self.running). Si ambas
-                     condiciones se cumplen a la vez, reporta
-                     "victims" primero, igual que el orden de
-                     verificacion de lose().
-        Entradas: ninguna
-        Salidas: str o None -> "victims", "structural", o None si
-                 aun no ha perdido
-        Uso: llamado por el DataCollector (model_reporters) en cada
-             fila, para poder analizar despues, via batch_run, por
-             que causa termino cada partida.
+        Name: get_lose_reason
+        Description: Determines the cause of the loss based on the
+                     current state, without side effects (unlike
+                     lose(), it does not touch self.running). If both
+                     conditions are met at once, reports "victims"
+                     first, matching lose()'s check order.
+        Inputs: none
+        Outputs: str or None -> "victims", "structural", or None if
+                 the game hasn't been lost yet
+        Usage: called by the DataCollector (model_reporters) on every
+               row, so that afterward, via batch_run, one can analyze
+               why each game ended.
         """
         if self.poiManager.getVictimsLost() >= 4:
             return "victims"
@@ -237,19 +291,22 @@ class GameManager(mesa.Model):
             return "structural"
         return None
 
+    #------------------------------ SIMULATION RUNNER ---------------------------------
+
     def run_limited(self, max_turns=500, verbose=True, debug=False):
         """
-        Nombre: run_limited
-        Descripcion: corre la simulacion en consola durante un numero
-                     limitado de turnos, guardando un snapshot por
-                     turno (incluyendo el inicial) para poder animarla
-                     despues con matplotlib, sin depender de Unity.
-        Entradas: max_turns (int, default 20), verbose (bool, imprime
-                  resumen por turno), debug (bool, imprime traza de
-                  cada agente)
-        Salidas: list[dict] -> self.history, un snapshot por turno
-        Uso: forma recomendada de correr pruebas en consola:
-             `model.run_limited(max_turns=40, verbose=True)`.
+        Name: run_limited
+        Description: Runs the simulation in the console for a
+                     limited number of turns, saving one snapshot per
+                     turn (including the initial one) so it can be
+                     animated afterward with matplotlib, without
+                     depending on Unity.
+        Inputs: max_turns (int, default 20), verbose (bool, prints a
+                summary per turn), debug (bool, prints a trace for
+                each agent)
+        Outputs: list[dict] -> self.history, one snapshot per turn
+        Usage: recommended way to run console tests:
+               `model.run_limited(max_turns=40, verbose=True)`.
         """
         self.history = []
         self._debug_print(0, "estado inicial", debug)
@@ -286,30 +343,64 @@ class GameManager(mesa.Model):
 
         return self.history
 
+    def _print_turn_summary(self, turn):
+        """
+        Name: _print_turn_summary
+        Description: Prints a summary of the global state to the
+                     console after a turn (damage, victims,
+                     active fire/smoke, active POIs).
+        Inputs: turn (int)
+        Outputs: none (prints to console)
+        Usage: called by run_limited() at the end of every turn,
+               only if verbose=True.
+        """
+        fuego = int((self.fireManager.fireGrid == 2).sum())
+        humo = int((self.fireManager.fireGrid == 1).sum())
+        print(f"  buildingDam={self.buildingManager.buildingDam}, "
+              f"savedVictims={self.poiManager.getVictimsSaved()}, "
+              f"lostVictims={self.poiManager.getVictimsLost()}, "
+              f"fuegoActivo={fuego}, humoActivo={humo}, "
+              f"poisActivos={self.poiManager.quantity}")
+
+    def _debug_print(self, turn, message, debug):
+        """
+        Name: _debug_print
+        Description: Prints a debug message with a consistent
+                     format, only if debug is active.
+        Inputs: turn (int), message (str), debug (bool)
+        Outputs: none (prints to console)
+        Usage: called by run_limited() for every agent on every
+               turn; enable with debug=True to see the detailed
+               trace.
+        """
+        if debug:
+            print(f"    [DEBUG turno {turn}] {message}")
+
+    #------------------------------ STEP RECORDING ---------------------------------
+
     def record_step(self, agent_id, action_type, dir=None, prev_pos=None, new_pos=None):
         """
-        Nombre: record_step
-        Descripcion: registra UN paso atomico (una sola accion de un
-                     agente: mover, cortar, abrir puerta, apagar
-                     fuego/humo, revelar POI, salvar victima) -- no
-                     un turno completo. MERGE: a diferencia de la
-                     version anterior (que armaba self.to_dict()
-                     completo -- las 80 celdas del tablero -- en
-                     CADA paso atomico), ahora solo arma un DELTA
-                     ligero {step, agentId, type, dir, prevX, prevY,
-                     newX, newY} y lo acumula en self.movements. El
-                     consumidor externo sigue pudiendo reconstruir el
-                     estado completo via to_dict(), que ahora incluye
-                     "movements" y por defecto vacia la lista despues
-                     de leerla (ver flush_movements).
-        Entradas: agent_id (int), action_type (str), dir (str o None),
-                  prev_pos (tuple[int,int] o None, posicion antes de
-                  la accion), new_pos (tuple[int,int] o None,
-                  posicion despues de la accion)
-        Salidas: dict -> el delta registrado
-        Uso: llamado por Firefighter._advance(), _act_primitive(),
-             _act_primitive_astar(), _act_optimized() y
-             setKnockdown() despues de cada accion exitosa.
+        Name: record_step
+        Description: Records ONE atomic step (a single agent action:
+                     move, chop, open door, put out fire/smoke,
+                     reveal POI, save victim) -- not a full turn.
+                     MERGE: unlike the previous version (which built
+                     a full self.to_dict() -- all 80 board cells --
+                     on EVERY atomic step), it now builds only a
+                     lightweight DELTA {step, agentId, type, dir,
+                     prevX, prevY, newX, newY} and appends it to
+                     self.movements. The external consumer can still
+                     reconstruct the full state via to_dict(), which
+                     now includes "movements" and by default clears
+                     the list after reading it (see flush_movements).
+        Inputs: agent_id (int), action_type (str), dir (str or
+                None), prev_pos (tuple[int,int] or None, position
+                before the action), new_pos (tuple[int,int] or None,
+                position after the action)
+        Outputs: dict -> the recorded delta
+        Usage: called by Firefighter._advance(), _act_primitive(),
+               _act_primitive_astar(), _act_optimized(), and
+               setKnockdown() after every successful action.
         """
         self.atomic_step_counter += 1
         movement = {
@@ -325,51 +416,22 @@ class GameManager(mesa.Model):
         self.movements.append(movement)
         return movement
 
-    def _print_turn_summary(self, turn):
-        """
-        Nombre: _print_turn_summary
-        Descripcion: imprime en consola un resumen del estado global
-                     tras un turno (daño, victimas, fuego/humo activo,
-                     POIs activos).
-        Entradas: turn (int)
-        Salidas: ninguna (imprime a consola)
-        Uso: llamado por run_limited() al final de cada turno, solo
-             si verbose=True.
-        """
-        fuego = int((self.fireManager.fireGrid == 2).sum())
-        humo = int((self.fireManager.fireGrid == 1).sum())
-        print(f"  buildingDam={self.buildingManager.buildingDam}, "
-              f"savedVictims={self.poiManager.getVictimsSaved()}, "
-              f"lostVictims={self.poiManager.getVictimsLost()}, "
-              f"fuegoActivo={fuego}, humoActivo={humo}, "
-              f"poisActivos={self.poiManager.quantity}")
-
-    def _debug_print(self, turn, message, debug):
-        """
-        Nombre: _debug_print
-        Descripcion: imprime un mensaje de depuracion con formato
-                     consistente, solo si debug esta activo.
-        Entradas: turn (int), message (str), debug (bool)
-        Salidas: ninguna (imprime a consola)
-        Uso: llamado por run_limited() por cada agente en cada turno;
-             activar con debug=True para ver la traza detallada.
-        """
-        if debug:
-            print(f"    [DEBUG turno {turn}] {message}")
+    #------------------------------ SNAPSHOTS & SERIALIZATION ---------------------------------
 
     def capture_snapshot(self):
         """
-        Nombre: capture_snapshot
-        Descripcion: copia el estado actual (fireGrid, POIGrid,
-                     paredes, daño, victimas, agentes) en un dict
-                     independiente, para poder reconstruir/animar la
-                     simulacion despues sin depender de que el
-                     GameManager siga vivo o sin mutar.
-        Entradas: ninguna
-        Salidas: dict -> {fireGrid, poiGrid, walls, buildingDam,
+        Name: capture_snapshot
+        Description: Copies the current state (fireGrid, POIGrid,
+                     walls, damage, victims, agents) into an
+                     independent dict, so the simulation can be
+                     reconstructed/animated afterward without
+                     depending on GameManager staying alive or being
+                     mutated.
+        Inputs: none
+        Outputs: dict -> {fireGrid, poiGrid, walls, buildingDam,
                  savedVictims, lostVictims, agents}
-        Uso: llamado por run_limited() una vez por turno; el
-             resultado alimenta animate_history().
+        Usage: called by run_limited() once per turn; the result
+               feeds animate_history().
         """
         walls_snapshot = [
             [self.buildingManager.get(x, y) for y in range(HEIGHT)]
@@ -391,13 +453,13 @@ class GameManager(mesa.Model):
 
     def _tile_to_dict(self, x, y):
         """
-        Nombre: _tile_to_dict
-        Descripcion: serializa una celda del tablero (paredes, fuego,
-                     poi, agentes presentes) a un diccionario plano.
-        Entradas: x, y (int)
-        Salidas: dict -> {x, y, walls, fire, poi, agentIds}
-        Uso: llamado por to_dict() una vez por cada una de las 80
-             celdas del tablero.
+        Name: _tile_to_dict
+        Description: Serializes a board cell (walls, fire, poi,
+                     agents present) into a flat dictionary.
+        Inputs: x, y (int)
+        Outputs: dict -> {x, y, walls, fire, poi, agentIds}
+        Usage: called by to_dict() once for each of the 80 board
+               cells.
         """
         walls = self.buildingManager.get(x, y)
         agent_ids = [a.unique_id for a in self.agentsList if a.x == x and a.y == y]
@@ -413,49 +475,25 @@ class GameManager(mesa.Model):
             "agentIds": agent_ids,
         }
 
-    def set_focus(self, agent_id):
-        """
-        Nombre: set_focus
-        Descripcion: marca un agente como "enfocado" (para UI externa,
-                     p.ej. resaltarlo en Unity).
-        Entradas: agent_id (int)
-        Salidas: ninguna
-        Uso: llamado externamente (Unity/consola) cuando el usuario
-             selecciona un agente especifico.
-        """
-        self.focus = agent_id
-
-    def clear_focus(self):
-        """
-        Nombre: clear_focus
-        Descripcion: quita el enfoque actual (vuelve a -1, "ninguno").
-        Entradas: ninguna
-        Salidas: ninguna
-        Uso: llamado externamente cuando se deselecciona el agente
-             enfocado.
-        """
-        self.focus = -1
-
     def to_dict(self, flush_movements=True):
         """
-        Nombre: to_dict
-        Descripcion: serializa el estado completo de la partida
-                     (turno, dimensiones, daño, victimas, foco, todas
-                     las celdas, todos los agentes) a un diccionario
-                     plano, listo para exportar como JSON. MERGE:
-                     ahora incluye "movements" (los deltas acumulados
-                     por record_step() desde la ultima llamada a
-                     to_dict). Por defecto (flush_movements=True) la
-                     lista se vacia despues de leerla, para que el
-                     consumidor externo reciba cada delta una sola
-                     vez; pasar flush_movements=False para inspeccion
-                     sin consumir el buffer (p.ej. debugging).
-        Entradas: flush_movements (bool, default True)
-        Salidas: dict -> estado completo de la partida, incluyendo
-                 "movements"
-        Uso: pensado como el punto de exportacion hacia un consumidor
-             externo (p.ej. Unity via JSON), o para inspeccion manual
-             del estado actual en consola.
+        Name: to_dict
+        Description: Serializes the full game state (turn,
+                     dimensions, damage, victims, focus, all cells,
+                     all agents) into a flat dictionary, ready to
+                     export as JSON. MERGE: now includes "movements"
+                     (the deltas accumulated by record_step() since
+                     the last call to to_dict()). By default
+                     (flush_movements=True) the list is cleared after
+                     being read, so the external consumer receives
+                     each delta exactly once; pass
+                     flush_movements=False to inspect without
+                     consuming the buffer (e.g. debugging).
+        Inputs: flush_movements (bool, default True)
+        Outputs: dict -> full game state, including "movements"
+        Usage: intended as the export point toward an external
+               consumer (e.g. Unity via JSON), or for manual
+               inspection of the current state in the console.
         """
         tiles = [self._tile_to_dict(x, y) for x in range(WIDTH) for y in range(HEIGHT)]
         result = {
@@ -483,3 +521,28 @@ class GameManager(mesa.Model):
         if flush_movements:
             self.movements = []
         return result
+
+    #------------------------------ FOCUS CONTROL ---------------------------------
+
+    def set_focus(self, agent_id):
+        """
+        Name: set_focus
+        Description: Marks an agent as "focused" (for external UI,
+                     e.g. highlighting it in Unity).
+        Inputs: agent_id (int)
+        Outputs: none
+        Usage: called externally (Unity/console) when the user
+               selects a specific agent.
+        """
+        self.focus = agent_id
+
+    def clear_focus(self):
+        """
+        Name: clear_focus
+        Description: Removes the current focus (back to -1, "none").
+        Inputs: none
+        Outputs: none
+        Usage: called externally when the focused agent is
+               deselected.
+        """
+        self.focus = -1

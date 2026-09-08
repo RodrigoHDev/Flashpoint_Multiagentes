@@ -1,3 +1,46 @@
+"""
+Title: Coordinator
+Author: Rodrigo Hurtado
+Description:
+
+Orchestrates the optimized strategy: generates candidates from the
+board state, builds the cost matrix via pathfinding, solves the
+optimal assignment with backtracking and pruning, and applies it to
+the agents. Keeps the last known state of candidates/free agents to
+know when it is worth recalculating.
+
+Functions:
+CONSTRUCTOR
+__init__
+
+CANDIDATE GENERATION
+scan_poi_candidates
+_chain_run
+scan_chain_breaks
+scan_breach_points
+scan_general_fire
+fire_density
+_apply_density_bonus
+_deduplicar_candidates
+bottleneck_door
+count_relevant_objectives
+scan_bottleneck_doors
+generate_candidates
+
+COST & ASSIGNMENT
+build_cost_matrix
+explore
+backtrack
+apply_assignment
+
+COORDINATION
+free_up_agents
+trigger_candidates_recal
+fill_remaining
+coordinate_turn
+
+"""
+
 import Candidate
 import numpy as np
 from auxiliars import triage_factor, a_star, manhattan, FIRE_CANDIDATE_TYPES, dijkstra_from
@@ -6,59 +49,62 @@ WIDTH, HEIGHT = 10, 8
 
 class Coordinator:
     """
-    Orquesta la estrategia optimizada: genera candidatos a partir
-    del estado del tablero, construye la matriz de costo via A*,
-    resuelve la asignacion optima con backtracking y poda, y la
-    aplica a los agentes. Guarda el ultimo estado conocido de
-    candidatos/agentes libres para saber cuando vale la pena
-    recalcular.
+    Orchestrates the optimized strategy: generates candidates from
+    the board state, builds the cost matrix via pathfinding, solves
+    the optimal assignment with backtracking and pruning, and
+    applies it to the agents. Keeps the last known state of
+    candidates/free agents to know when it is worth recalculating.
     """
+
+    #------------------------------ CONSTRUCTOR ---------------------------------
 
     def __init__(self):
         """
-        Nombre: __init__
-        Descripcion: inicializa el coordinador sin ninguna
-                     asignacion previa registrada.
-        Entradas: ninguna
-        Salidas: ninguna (constructor)
-        Uso: instanciado una vez dentro de GameManager.__init__,
-             igual que los demas managers.
+        Name: __init__
+        Description: Initializes the coordinator with no previous
+                     assignment registered.
+        Inputs: none
+        Outputs: none (constructor)
+        Usage: instantiated once inside GameManager.__init__, same
+               as the other managers.
         """
-        self._ultimo_candidatos = set()
-        self._ultimo_libres = set()
-        self._triage_previo = False
-        self._dam_en_ultimo_interrupt = 0
+        self.prev_candidates = set()
+        self.prev_free_agents = set()
+        self.prev_triage = False
+        self.damage_in_last_interrupt = 0
 
-    def scan_poi_candidates(self, poi, ya_asignados):
+    #------------------------------ CANDIDATE GENERATION ---------------------------------
+
+    def scan_poi_candidates(self, poi, assigned_agents):
         """
-        Nombre: scan_poi_candidates
-        Descripcion: genera un candidato por cada POI sin revelar
-                     que no tenga ya un agente asignado.
-        Entradas: poi (PoiManager), ya_asignados (set[tuple[int,int]])
-        Salidas: list[Candidate]
-        Uso: llamado por generate_candidates().
+        Name: scan_poi_candidates
+        Description: Generates one candidate per unrevealed POI that
+                     does not already have an agent assigned.
+        Inputs: poi (PoiManager), assigned_agents (set[tuple[int,int]])
+        Outputs: list[Candidate]
+        Usage: called by generate_candidates().
         """
-        candidatos = []
+        candidates = []
         for pos in poi.pois:
-            if pos not in ya_asignados:
-                candidatos.append(Candidate.Candidate(pos, "poi_sin_revelar", 10))
-        return candidatos
+            if pos not in assigned_agents:
+                candidates.append(Candidate.Candidate(pos, "poi_sin_revelar", 10))
+        return candidates
 
 
     def _chain_run(self, building, fire, x, y, dir):
         """
-        Nombre: _chain_run
-        Descripcion: cuenta cuantas celdas consecutivas de fuego hay
-                     empezando justo despues de (x,y) en la direccion
-                     dada, caminando solo por lados abiertos (mismo
-                     criterio que shockwave: element in (0,3)). No
-                     cuenta la celda de origen.
-        Entradas: building (BuildingManager), fire (FireManager),
-                  x, y (int), dir (str)
-        Salidas: int -> longitud de la racha de fuego en esa direccion
-        Uso: llamado por scan_chain_breaks() dos veces por eje
-             (una vez por cada sentido) para medir cuanto fuego
-             contiguo hay a cada lado de una celda candidata.
+        Name: _chain_run
+        Description: Counts how many consecutive fire cells there
+                     are starting right after (x, y) in the given
+                     direction, walking only through open sides
+                     (same criterion as shockwave: element in
+                     (0, 3)). Does not count the origin cell.
+        Inputs: building (BuildingManager), fire (FireManager),
+                x, y (int), dir (str)
+        Outputs: int -> length of the fire streak in that direction
+        Usage: called by scan_chain_breaks() twice per axis (once
+               per direction) to measure how much contiguous fire is
+               on each side of a candidate cell.
         """
         count = 0
         cx, cy = x, y
@@ -76,78 +122,77 @@ class Coordinator:
             cx, cy = nx, ny
         return count
 
-    def scan_chain_breaks(self, fire, building, ya_asignados):
+    def scan_chain_breaks(self, fire, building, assigned_agents):
         """
-        Nombre: scan_chain_breaks
-        Descripcion: para cada celda de fuego activa, mide (por cada
-                     eje vertical y horizontal) cuanto fuego contiguo
-                     hay a cada lado usando _chain_run, y calcula un
-                     "puntaje de ruptura" = min(racha_a, racha_b) + 1.
-                     Ese puntaje es maximo cerca del centro de una
-                     cadena larga y minimo (1) en los extremos, asi
-                     que prioriza el "eslabon debil" que divide una
-                     cadena larga en dos cortas, no solo el borde del
-                     cluster. Solo genera candidato si al menos un eje
-                     tiene una cadena de 3+ celdas y el puntaje es >=2
-                     (evita marcar fuego aislado o en el borde).
-        Entradas: fire (FireManager), building (BuildingManager),
-                  ya_asignados (set[tuple[int,int]])
-        Salidas: list[Candidate] -> tipo "romper_cadena"
-        Uso: llamado por generate_candidates().
+        Name: scan_chain_breaks
+        Description: For each active fire cell, measures (per
+                     vertical and horizontal axis) how much
+                     contiguous fire is on each side using
+                     _chain_run, and computes a "break score" =
+                     min(run_a, run_b) + 1. This score is maximal
+                     near the center of a long chain and minimal (1)
+                     at the ends, so it prioritizes the "weak link"
+                     that splits a long chain into two short ones,
+                     not just the edge of the cluster. Only
+                     generates a candidate if at least one axis has
+                     a chain of 3+ cells and the score is >= 2
+                     (avoids flagging isolated or edge fire).
+        Inputs: fire (FireManager), building (BuildingManager),
+                assigned_agents (set[tuple[int,int]])
+        Outputs: list[Candidate] -> type "romper_cadena"
+        Usage: called by generate_candidates().
         """
-        candidatos = []
-        ejes = [("up", "down"), ("left", "right")]
+        candidates = []
+        axis = [("up", "down"), ("left", "right")]
 
         for x in range(WIDTH):
             for y in range(HEIGHT):
-                if (x, y) in ya_asignados:
+                if (x, y) in assigned_agents:
                     continue
                 if fire.get(x, y) != 2:
                     continue
 
-                mejor_score = 0
-                for dir_a, dir_b in ejes:
+                best_score = 0
+                for dir_a, dir_b in axis:
                     run_a = self._chain_run(building, fire, x, y, dir_a)
                     run_b = self._chain_run(building, fire, x, y, dir_b)
                     if run_a + run_b + 1 < 3:
                         continue
                     score = min(run_a, run_b) + 1
-                    mejor_score = max(mejor_score, score)
+                    best_score = max(best_score, score)
 
-                if mejor_score >= 2:
-                    prioridad = 8 + mejor_score * 3
-                    candidatos.append(Candidate.Candidate((x, y), "romper_cadena", prioridad))
+                if best_score >= 2:
+                    priority = 8 + best_score * 3
+                    candidates.append(Candidate.Candidate((x, y), "romper_cadena", priority))
 
-        return candidatos
+        return candidates
 
-    def scan_breach_points(self, poi, fire, building, ya_asignados):
+    def scan_breach_points(self, poi, fire, building, assigned_agents):
         """
-        Nombre: scan_breach_points
-        Descripcion: para cada POI sin revelar o victima (poi.get en
-                     (1,3)), hace BFS saliendo de esa celda solo por
-                     lados abiertos (mismo criterio que
-                     getNeighborhoodFire: element in (0,3)) hasta
-                     encontrar la celda de fuego activa mas cercana
-                     por ese camino sin paredes/puertas cerradas de
-                     por medio. Esa celda de fuego es el "punto de
-                     brecha": el unico camino por el que el fuego
-                     podria llegar a ese POI sin necesitar una
-                     explosion con suerte. Si varios POIs llegan a la
-                     misma celda de fuego, se queda con la distancia
-                     minima encontrada. Prioridad mas alta cuanto mas
-                     cerca esta el punto de brecha del POI (a
-                     distancia 1 es el mismo caso que antes cubria
-                     scan_fire_threats, pero con prioridad mayor y
-                     tambien detecta amenazas a 2+ pasos de distancia
-                     que scan_fire_threats no veia). Esta funcion
-                     generaliza y reemplaza a scan_fire_threats.
-        Entradas: poi (PoiManager), fire (FireManager),
-                  building (BuildingManager),
-                  ya_asignados (set[tuple[int,int]])
-        Salidas: list[Candidate] -> tipo "punto_de_brecha"
-        Uso: llamado por generate_candidates().
+        Name: scan_breach_points
+        Description: For each unrevealed POI or victim (poi.get in
+                     (1, 3)), runs a BFS out of that cell only
+                     through open sides until
+                     finding the nearest active fire cell along that
+                     path, with no walls/closed doors in between.
+                     That fire cell is the "breach point": the only
+                     path by which fire could reach that POI without
+                     needing a lucky explosion. If several POIs reach
+                     the same fire cell, keeps the minimum distance
+                     found. Higher priority the closer the breach
+                     point is to the POI (distance 1 is the same case
+                     previously covered by scan_fire_threats, but
+                     with higher priority, and it also detects
+                     threats 2+ steps away that scan_fire_threats
+                     could not see). This function generalizes and
+                     replaces scan_fire_threats.
+        Inputs: poi (PoiManager), fire (FireManager),
+                building (BuildingManager),
+                assigned_agents (set[tuple[int,int]])
+        Outputs: list[Candidate] -> type "punto_de_brecha"
+        Usage: called by generate_candidates().
         """
-        candidatos = []
+        candidates = []
         directions = ["up", "down", "left", "right"]
         mejor_por_fuego = {}
 
@@ -158,9 +203,9 @@ class Coordinator:
             if poi.get(x, y) in (1, 3)
         ]
 
-        for origen in objetivos:
-            visitado = {origen}
-            frontera = [origen]
+        for origin in objetivos:
+            visitado = {origin}
+            frontera = [origin]
             dist = 0
             encontrado = None
 
@@ -189,65 +234,66 @@ class Coordinator:
                 continue
 
             fire_pos, distancia = encontrado
-            if fire_pos in ya_asignados:
+            if fire_pos in assigned_agents:
                 continue
             anterior = mejor_por_fuego.get(fire_pos)
             if anterior is None or distancia < anterior:
                 mejor_por_fuego[fire_pos] = distancia
 
         for fire_pos, distancia in mejor_por_fuego.items():
-            prioridad = max(20 - 3 * (distancia - 1), 6)
-            candidatos.append(Candidate.Candidate(fire_pos, "punto_de_brecha", prioridad))
+            priority = max(20 - 3 * (distancia - 1), 6)
+            candidates.append(Candidate.Candidate(fire_pos, "punto_de_brecha", priority))
 
-        return candidatos
+        return candidates
 
-    def scan_general_fire(self, fire, building, ya_asignados):
+    def scan_general_fire(self, fire, building, assigned_agents):
         """
-        Nombre: scan_general_fire
-        Descripcion: genera un candidato por cada celda con fuego o
-                     humo activo, sin importar si amenaza un POI.
-                     Prioridad baja: sirve para ocupar agentes que
-                     el backtracking no asigno a algo mas urgente,
-                     evitando que el edificio se dañe sin control.
-        Entradas: fire (FireManager), ya_asignados (set[tuple[int,int]])
-        Salidas: list[Candidate]
-        Uso: llamado por generate_candidates().
+        Name: scan_general_fire
+        Description: Generates one candidate per cell with active
+                     fire or smoke, regardless of whether it
+                     threatens a POI. Low priority: it serves to
+                     occupy agents that the backtracking did not
+                     assign to something more urgent, preventing the
+                     building from taking uncontrolled damage.
+        Inputs: fire (FireManager), assigned_agents (set[tuple[int,int]])
+        Outputs: list[Candidate]
+        Usage: called by generate_candidates().
         """
-        candidatos = []
+        candidates = []
         directions = ["up", "down", "left", "right"]
         for x in range(WIDTH):
             for y in range(HEIGHT):
-                if (x, y) in ya_asignados:
+                if (x, y) in assigned_agents:
                     continue
                 estado = fire.get(x, y)
                 buildDamage = 0
                 if estado == 2:
-                  for dir in directions:
-                    element = building.getDir(x, y, dir)
-                    if element in (1, 2, 4): buildDamage += 1
-                    candidatos.append(Candidate.Candidate((x, y), "fuego_general", 5 + buildDamage))
+                    for dir in directions:
+                        element = building.getDir(x, y, dir)
+                        if element in (1, 2, 4): buildDamage += 1
+                        candidates.append(Candidate.Candidate((x, y), "fuego_general", 5 + buildDamage))
                 elif estado == 1:
-                    candidatos.append(Candidate.Candidate((x, y), "humo_general", 1))
+                    candidates.append(Candidate.Candidate((x, y), "humo_general", 1))
 
-        return candidatos
+        return candidates
 
 
-    def _densidad_fuego(self, fire, x, y, radio=2):
+    def fire_density(self, fire, x, y, radio=2):
         """
-        Nombre: _densidad_fuego
-        Descripcion: cuenta cuantas celdas en fuego activo (estado==2)
-                     hay dentro de un radio Manhattan `radio` alrededor
-                     de (x,y), sin contar la propia celda (x,y). No
-                     revisa paredes/puertas -- es una medida de cuanto
-                     fuego hay "cerca" en el tablero, no de cuanto es
-                     alcanzable, a proposito: lo que nos interesa es
-                     detectar zonas ya densas de fuego para reforzarlas
-                     con mas agentes, sin importar si el camino directo
-                     esta bloqueado.
-        Entradas: fire (FireManager), x, y (int), radio (int, default 2)
-        Salidas: int -> numero de celdas vecinas en fuego
-        Uso: llamado por _apply_density_bonus() una vez por candidato
-             de tipo fuego.
+        Name: fire_density
+        Description: Counts how many active fire cells (state == 2)
+                     lie within a Manhattan radius `radio` around
+                     (x, y), not counting cell (x, y) itself. Does
+                     not check walls/doors -- it is a measure of how
+                     much fire is "nearby" on the board, not of how
+                     much is reachable, on purpose: what matters here
+                     is detecting zones already dense with fire to
+                     reinforce them with more agents, regardless of
+                     whether the direct path is blocked.
+        Inputs: fire (FireManager), x, y (int), radio (int, default 2)
+        Outputs: int -> number of neighboring cells on fire
+        Usage: called by _apply_density_bonus() once per fire-type
+               candidate.
         """
         count = 0
         for dx in range(-radio, radio + 1):
@@ -261,98 +307,101 @@ class Coordinator:
                     if fire.get(nx, ny) == 2:
                         count += 1
         return count
- 
-    def _apply_density_bonus(self, candidatos, fire, radio=2, peso=3):
+
+    def _apply_density_bonus(self, candidates, fire, radio=2, peso=3):
         """
-        Nombre: _apply_density_bonus
-        Descripcion: sube la prioridad de cada candidato de tipo
-                     fuego (FIRE_CANDIDATE_TYPES) segun que tan denso
-                     de fuego este su vecindario (_densidad_fuego).
-                     Se aplica UNA vez sobre la lista ya combinada de
-                     generate_candidates, no dentro de cada scan por
-                     separado -- as� "punto_de_brecha" y
-                     "romper_cadena" en una zona con cascada de
-                     explosiones reciben el mismo refuerzo que
-                     "fuego_general" ahi, en vez de competir cada uno
-                     solo con su propio merito local. La idea es que
-                     al ganar varios candidatos de la misma zona
-                     prioridad simultaneamente, el backtracking (que
-                     hace matching 1 a 1 candidato-agente) tenga razon
-                     para mandar mas de un agente a esa zona en vez de
-                     repartirlos parejo por el tablero.
-        Entradas: candidatos (list[Candidate]), fire (FireManager),
-                  radio (int, default 2), peso (float, default 3)
-        Salidas: list[Candidate] -> los mismos objetos, prioridad
-                 modificada in-place
-        Uso: llamado por generate_candidates() justo antes de
-             regresar la lista combinada.
+        Name: _apply_density_bonus
+        Description: Raises the priority of each fire-type candidate
+                     (FIRE_CANDIDATE_TYPES) according to how dense
+                     with fire its neighborhood is (fire_density).
+                     Applied ONCE over the already-combined list from
+                     generate_candidates, not inside each scan
+                     separately -- this way "punto_de_brecha" and
+                     "romper_cadena" in a zone with an explosion
+                     cascade receive the same boost as
+                     "fuego_general" there, instead of each competing
+                     solely on its own local merit. The idea is that
+                     when several candidates from the same zone gain
+                     priority simultaneously, the backtracking (which
+                     does 1-to-1 candidate-agent matching) has reason
+                     to send more than one agent to that zone instead
+                     of spreading them evenly across the board.
+        Inputs: candidates (list[Candidate]), fire (FireManager),
+                radio (int, default 2), peso (float, default 3)
+        Outputs: list[Candidate] -> the same objects, priority
+                 modified in-place
+        Usage: called by generate_candidates() right before
+               returning the combined list.
         """
-        for c in candidatos:
-            if c.tipo in FIRE_CANDIDATE_TYPES:
-                densidad = self._densidad_fuego(fire, c.pos[0], c.pos[1], radio)
-                c.prioridad += densidad * peso
-        return candidatos
+        for c in candidates:
+            if c.type in FIRE_CANDIDATE_TYPES:
+                densidad = self.fire_density(fire, c.pos[0], c.pos[1], radio)
+                c.priority += densidad * peso
+        return candidates
 
 
-    def _deduplicar_candidatos(self, candidatos):
+    def _deduplicar_candidates(self, candidates):
         """
-        Nombre: _deduplicar_candidatos
-        Descripcion: cuando dos o mas scan_* generan un candidato en
-                     la MISMA celda (una celda de fuego facilmente
-                     califica a la vez como "fuego_general",
-                     "romper_cadena" y "frontera_contencion"), se
-                     queda solo con el de mayor prioridad y descarta
-                     los demas. Una celda fisica sigue siendo una
-                     sola celda sin importar cuantos scans distintos
-                     la detecten -- dejarla duplicada en la lista solo
-                     infla C (numero de candidatos) sin agregar
-                     informacion real, encareciendo build_cost_matrix
-                     (que corre pathfinding por cada candidato) y el
-                     arbol de busqueda de backtrack() de forma
-                     innecesaria. Es puramente una reduccion de
-                     trabajo repetido: no cambia ninguna prioridad, no
-                     descarta ninguna celda real, solo colapsa
-                     duplicados exactos de posicion.
-        Entradas: candidatos (list[Candidate])
-        Salidas: list[Candidate] -> como maximo un candidato por
-                 posicion (el de mayor prioridad de los que competian
-                 ahi)
-        Uso: llamado por generate_candidates() como ultimo paso,
-             despues de _apply_density_bonus() (el orden no importa
-             para la correctitud: candidatos en la misma posicion
-             reciben el mismo bono de densidad, asi que el orden
-             relativo entre ellos no cambia).
+        Name: _deduplicar_candidates
+        Description: When two or more scan_* functions generate a
+                     candidate on the SAME cell (a fire cell easily
+                     qualifies at once as "fuego_general",
+                     "romper_cadena", and "frontera_contencion"),
+                     keeps only the one with the highest priority and
+                     discards the rest. A physical cell is still a
+                     single cell no matter how many different scans
+                     detect it -- leaving it duplicated in the list
+                     only inflates C (number of candidates) without
+                     adding real information, making
+                     build_cost_matrix (which runs pathfinding per
+                     candidate) and backtrack()'s search tree more
+                     expensive unnecessarily. It is purely a
+                     reduction of repeated work: it does not change
+                     any priority, does not discard any real cell,
+                     only collapses exact position duplicates.
+        Inputs: candidates (list[Candidate])
+        Outputs: list[Candidate] -> at most one candidate per
+                 position (the highest-priority one among those
+                 competing there)
+        Usage: called by generate_candidates() as the last step,
+               after _apply_density_bonus() (order does not matter
+               for correctness: candidates at the same position get
+               the same density bonus, so their relative order does
+               not change).
         """
         mejor_por_pos = {}
-        for c in candidatos:
+        for c in candidates:
             actual = mejor_por_pos.get(c.pos)
-            if actual is None or c.prioridad > actual.prioridad:
+            if actual is None or c.priority > actual.priority:
                 mejor_por_pos[c.pos] = c
         return list(mejor_por_pos.values())
 
 
-    def _es_puerta_bottleneck(self, building, origen, destino, max_hops=8):
+    def bottleneck_door(self, building, origin, destino, max_hops=8):
             """
-            Nombre: _es_puerta_bottleneck
-            Descripcion: prueba de conectividad topologica (BFS, sin pesos)
-                        entre origen y destino EXCLUYENDO la arista directa
-                        que los conecta. Si no aparece ninguna ruta
-                        alternativa dentro de max_hops, esa puerta es la
-                        unica via razonable entre ambas zonas -> es un
-                        cuello de botella. Solo se considera intransitable
-                        el elemento 5 (pared exterior indestructible); todo
-                        lo demas (0,1,2,3,4) se admite como ruta alternativa
-                        posible, porque el criterio aqui es de TOPOLOGIA
-                        (existe o no otro camino), no de costo en AP.
-            Entradas: building (BuildingManager), origen, destino
+            Name: bottleneck_door
+            Description: Topological connectivity test (BFS, no
+                         weights) between origin and destino,
+                         EXCLUDING the direct edge that connects
+                         them. If no alternative route appears within
+                         max_hops, that door is the only reasonable
+                         path between the two zones -> it is a
+                         bottleneck. Only element 5 (indestructible
+                         exterior wall) is considered impassable;
+                         everything else (0, 1, 2, 3, 4) is admitted
+                         as a possible alternative route, because the
+                         criterion here is TOPOLOGICAL (does another
+                         path exist or not), not AP cost.
+            Inputs: building (BuildingManager), origin, destino
                     (tuple[int,int]), max_hops (int, default 8)
-            Salidas: bool -> True si no hay ruta alternativa cercana
-            Uso: llamado por scan_bottleneck_doors() una vez por cada puerta
-                cerrada encontrada.
+            Outputs: bool -> True if there is no nearby alternative
+                     route
+            Usage: called by scan_bottleneck_doors() once per closed
+                   door found.
             """
             directions = ["up", "down", "left", "right"]
-            visitado = {origen}
-            frontera = [origen]
+            visitado = {origin}
+            frontera = [origin]
             hops = 0
 
             while frontera and hops < max_hops:
@@ -360,34 +409,34 @@ class Coordinator:
                 hops += 1
                 for (x, y) in frontera:
                     for dir in directions:
-                        if (x, y) == origen and building.getNext(x, y, dir) == destino:
-                            continue  # excluye la arista que estamos probando
+                        if (x, y) == origin and building.getNext(x, y, dir) == destino:
+                            continue  # excludes the edge being tested
                         if building.getDir(x, y, dir) == 5:
                             continue
                         next_pos = building.getNext(x, y, dir)
                         if next_pos is None or next_pos in visitado:
                             continue
                         if next_pos == destino:
-                            return False  # ruta alterna encontrada
+                            return False  # alternative route found
                         visitado.add(next_pos)
                         siguiente.append(next_pos)
                 frontera = siguiente
 
             return True
 
-    def _contar_objetivos_relevantes(self, poi, fire, pos, radio=3):
+    def count_relevant_objectives(self, poi, fire, pos, radio=3):
         """
-        Nombre: _contar_objetivos_relevantes
-        Descripcion: cuenta POIs sin revelar/victimas y celdas de fuego
-                    activo dentro de un radio Manhattan alrededor de
-                    pos. Sirve para descartar puertas-bottleneck que dan
-                    acceso a zonas sin nada urgente del otro lado -- no
-                    tiene caso mandar un agente a abrir una puerta que
-                    no lleva a ningun objetivo real.
-        Entradas: poi (PoiManager), fire (FireManager), pos
+        Name: count_relevant_objectives
+        Description: Counts unrevealed POIs/victims and active fire
+                     cells within a Manhattan radius around pos.
+                     Used to discard bottleneck doors that give
+                     access to zones with nothing urgent on the other
+                     side -- there is no point sending an agent to
+                     open a door that leads to no real objective.
+        Inputs: poi (PoiManager), fire (FireManager), pos
                 (tuple[int,int]), radio (int, default 3)
-        Salidas: int -> cantidad de objetivos relevantes cercanos
-        Uso: llamado por scan_bottleneck_doors() para ponderar prioridad.
+        Outputs: int -> count of relevant nearby objectives
+        Usage: called by scan_bottleneck_doors() to weigh priority.
         """
         x0, y0 = pos
         count = 0
@@ -401,27 +450,27 @@ class Coordinator:
                     count += 1
         return count
 
-    def scan_bottleneck_doors(self, poi, fire, building, ya_asignados):
+    def scan_bottleneck_doors(self, poi, fire, building, assigned_agents):
         """
-        Nombre: scan_bottleneck_doors
-        Descripcion: detecta puertas cerradas que son la unica conexion
-                    razonable entre dos zonas del tablero
-                    (_es_puerta_bottleneck) y que dan acceso a
-                    objetivos relevantes del otro lado
-                    (_contar_objetivos_relevantes). Genera un candidato
-                    en la celda DEL OTRO LADO de la puerta -- no en la
-                    puerta misma -- para que el pathfinding normal
-                    (a_star/dijkstra) atraviese y abra la puerta de
-                    camino, sin necesidad de logica adicional en
-                    Firefighter (_advance ya abre puertas cerradas que
-                    encuentra en su ruta).
-        Entradas: poi (PoiManager), fire (FireManager),
+        Name: scan_bottleneck_doors
+        Description: Detects closed doors that are the only
+                     reasonable connection between two zones of the
+                     board (bottleneck_door) and that give
+                     access to relevant objectives on the other side
+                     (count_relevant_objectives). Generates a
+                     candidate on the cell ON THE OTHER SIDE of the
+                     door -- not on the door itself -- so that normal
+                     pathfinding (a_star/dijkstra) crosses through
+                     and opens the door along the way, with no need
+                     for extra logic in Firefighter (_advance already
+                     opens closed doors it finds along its route).
+        Inputs: poi (PoiManager), fire (FireManager),
                 building (BuildingManager),
-                ya_asignados (set[tuple[int,int]])
-        Salidas: list[Candidate] -> tipo "abrir_puerta"
-        Uso: llamado por generate_candidates().
+                assigned_agents (set[tuple[int,int]])
+        Outputs: list[Candidate] -> type "abrir_puerta"
+        Usage: called by generate_candidates().
         """
-        candidatos = []
+        candidates = []
         directions = ["up", "down", "left", "right"]
         procesadas = set()
 
@@ -439,393 +488,332 @@ class Coordinator:
                         continue
                     procesadas.add(clave)
 
-                    if next_pos in ya_asignados:
+                    if next_pos in assigned_agents:
                         continue
 
-                    if not self._es_puerta_bottleneck(building, (x, y), next_pos):
+                    if not self.bottleneck_door(building, (x, y), next_pos):
                         continue
 
-                    relevancia = self._contar_objetivos_relevantes(poi, fire, next_pos)
+                    relevancia = self.count_relevant_objectives(poi, fire, next_pos)
                     if relevancia == 0:
                         continue
 
-                    prioridad = 6 + relevancia * 2
-                    candidatos.append(Candidate.Candidate(next_pos, "abrir_puerta", prioridad))
+                    priority = 6 + relevancia * 2
+                    candidates.append(Candidate.Candidate(next_pos, "abrir_puerta", priority))
 
-        return candidatos
+        return candidates
 
-    def generate_candidates(self, poi, fire, building, ya_asignados):
+    def generate_candidates(self, poi, fire, building, assigned_agents):
         """
-        Nombre: generate_candidates
-        Descripcion: combina las tres fuentes de candidatos (POI,
-                     amenaza de fuego, fuego/humo general) en una
-                     sola lista, excluyendo posiciones ya asignadas,
-                     aplica el bono de densidad, y colapsa duplicados
-                     de posicion a uno solo (el de mayor prioridad)
-                     via _deduplicar_candidatos().
-        Entradas: poi (PoiManager), fire (FireManager),
-                  building (BuildingManager),
-                  ya_asignados (set[tuple[int,int]])
-        Salidas: list[Candidate]
-        Uso: llamado por coordinate_turn() al inicio de cada
-             recalculo de asignacion.
+        Name: generate_candidates
+        Description: Combines all candidate sources (POI, breach
+                     points, chain breaks, general fire, and
+                     bottleneck doors) into a single list, excluding
+                     already-assigned positions, applies the density
+                     bonus, and collapses position duplicates into
+                     one (the highest priority) via
+                     _deduplicar_candidates().
+        Inputs: poi (PoiManager), fire (FireManager),
+                building (BuildingManager),
+                assigned_agents (set[tuple[int,int]])
+        Outputs: list[Candidate]
+        Usage: called by coordinate_turn() at the start of every
+               assignment recalculation.
         """
-        candidatos = (
-            self.scan_poi_candidates(poi, ya_asignados)
-            + self.scan_breach_points(poi, fire, building, ya_asignados)
-            + self.scan_chain_breaks(fire, building, ya_asignados)
-            + self.scan_general_fire(fire, building, ya_asignados)
-            + self.scan_bottleneck_doors(poi, fire, building, ya_asignados)
+        candidates = (
+            self.scan_poi_candidates(poi, assigned_agents)
+            + self.scan_breach_points(poi, fire, building, assigned_agents)
+            + self.scan_chain_breaks(fire, building, assigned_agents)
+            + self.scan_general_fire(fire, building, assigned_agents)
+            + self.scan_bottleneck_doors(poi, fire, building, assigned_agents)
         )
-        candidatos = self._apply_density_bonus(candidatos, fire)
-        return self._deduplicar_candidatos(candidatos)
+        candidates = self._apply_density_bonus(candidates, fire)
+        return self._deduplicar_candidates(candidates)
 
+    #------------------------------ COST & ASSIGNMENT ---------------------------------
 
-    def build_cost_matrix(self, agentes, candidatos, building, fire):
+    def build_cost_matrix(self, agents, candidates, building, fire):
         """
-        Nombre: build_cost_matrix
-        Descripcion: calcula, para cada par (agente, candidato), el
-                     COSTO EFECTIVO de ir hacia ese candidato: la
-                     distancia real (via A*) dividida entre la
-                     prioridad del candidato. Una prioridad alta
-                     reduce el costo efectivo, haciendo que el
-                     backtracking prefiera ese candidato aunque este
-                     mas lejos que uno de menor prioridad -- asi la
-                     prioridad SI participa en la asignacion, no solo
-                     la distancia cruda. Si no existe ruta posible,
-                     el costo queda como infinito (la poda lo
-                     descarta automaticamente, sin importar la
-                     prioridad).
-        Entradas: agentes (list[Firefighter]), candidatos
-                  (list[Candidate]), building (BuildingManager),
-                  fire (FireManager)
-        Salidas: dict {(agente, candidato): costo efectivo (float)}
-        Uso: llamado por coordinate_turn() antes de correr el
-             backtracking. Cambiar Candidate.prioridad al declarar
-             candidatos (en scan_poi_candidates, scan_fire_threats,
-             etc.) altera directamente el resultado de este calculo,
-             sin necesidad de tocar backtrack()/_explorar().
+        Name: build_cost_matrix
+        Description: Computes, for each (agent, candidate) pair, the
+                     EFFECTIVE COST of going toward that candidate:
+                     the real distance (via Dijkstra, computed once
+                     per agent from its position) divided by the
+                     candidate's priority. A high priority reduces
+                     the effective cost, making the backtracking
+                     prefer that candidate even if it is farther than
+                     one with lower priority -- this way priority DOES
+                     participate in the assignment, not just raw
+                     distance.
+        Inputs: agents (list[Firefighter]), candidates
+                (list[Candidate]), building (BuildingManager),
+                fire (FireManager)
+        Outputs: dict {(agent, candidato): effective cost (float)}
+        Usage: called by coordinate_turn() before running the
+               backtracking. Changing Candidate.priority when
+               declaring candidates (in scan_poi_candidates,
+               scan_breach_points, etc.) directly alters the result
+               of this computation, with no need to touch
+               backtrack()/explore().
         """
         triage = triage_factor(building, fire)
-        matriz = {}
-        for agente in agentes:
-            costs = dijkstra_from(agente.pos, building, fire)
-            for candidato in candidatos:
+        matrix = {}
+        for agent in agents:
+            costs = dijkstra_from(agent.pos, building, fire)
+            for candidato in candidates:
                 costo = costs[candidato.pos]
-                prioridad = max(candidato.prioridad, 0.01) 
-                if candidato.tipo in FIRE_CANDIDATE_TYPES:
-                    prioridad *= triage
-                matriz[(agente, candidato)] = costo / prioridad
-        return matriz
+                priority = max(candidato.priority, 0.01)
+                if candidato.type in FIRE_CANDIDATE_TYPES:
+                    priority *= triage
+                matrix[(agent, candidato)] = costo / priority
+        return matrix
 
-    def _explorar(self, agentes_restantes, candidatos_restantes, matriz, mejor, asignacion_actual, costo_actual):
+    def explore(self, agents_restantes, remaining_candidates, matrix, mejor, asignation_actual, costo_actual):
         """
-        Nombre: _explorar
-        Descripcion: paso recursivo del backtracking con poda. Ahora
-                     es un metodo propio (antes vivia anidado dentro
-                     de backtrack, tomando matriz por closure) que
-                     recibe TODO explicitamente como parametro,
-                     incluyendo matriz -- esto es lo que estaba
-                     faltando al considerar sacarla fuera. Prueba
-                     cada candidato disponible para el primer agente
-                     de la lista, poda ramas cuyo costo acumulado ya
-                     supera la mejor solucion completa conocida, y
-                     tambien explora la opcion de dejar al agente
-                     sin asignar cuando sobran mas agentes que
-                     candidatos.
-        Entradas: agentes_restantes (list[Firefighter]),
-                  candidatos_restantes (list[Candidate]),
-                  matriz (dict, tabla de costos -- ahora explicita,
-                  no por closure), mejor (dict mutable, compartido
-                  entre llamadas recursivas para llevar el mejor
-                  resultado encontrado), asignacion_actual (dict,
-                  asignacion parcial en construccion), costo_actual
-                  (float, costo acumulado de esa asignacion parcial)
-        Salidas: ninguna (modifica `mejor` in-place)
-        Uso: llamado por backtrack() para iniciar la busqueda, y por
-             si misma recursivamente para explorar cada rama.
+        Name: explore
+        Description: Recursive backtracking step with pruning. Now
+                     its own method (previously nested inside
+                     backtrack, capturing matrix by closure) that
+                     receives EVERYTHING explicitly as a parameter,
+                     including matrix -- this was what was missing
+                     when considering pulling it out. Tries each
+                     available candidate for the first agent in the
+                     list, prunes branches whose accumulated cost
+                     already exceeds the best known complete
+                     solution, and also explores the option of
+                     leaving the agent unassigned when there are more
+                     agents left than candidates.
+        Inputs: agents_restantes (list[Firefighter]),
+                remaining_candidates (list[Candidate]),
+                matrix (dict, cost table -- now explicit, not via
+                closure), mejor (mutable dict, shared across
+                recursive calls to carry the best result found),
+                asignation_actual (dict, partial assignment under
+                construction), costo_actual (float, accumulated cost
+                of that partial assignment)
+        Outputs: none (modifies `mejor` in-place)
+        Usage: called by backtrack() to start the search, and by
+               itself recursively to explore each branch.
         """
-        if not agentes_restantes or not candidatos_restantes:
+        if not agents_restantes or not remaining_candidates:
             if costo_actual < mejor["costo"]:
                 mejor["costo"] = costo_actual
-                mejor["asignacion"] = asignacion_actual.copy()
+                mejor["asignation"] = asignation_actual.copy()
             return
 
-        agente = agentes_restantes[0]
-        resto_agentes = agentes_restantes[1:]
+        agent = agents_restantes[0]
+        resto_agents = agents_restantes[1:]
 
-        for candidato in candidatos_restantes:
-            costo_arista = matriz[(agente, candidato)]
+        for candidato in remaining_candidates:
+            costo_arista = matrix[(agent, candidato)]
             nuevo_costo = costo_actual + costo_arista
 
             if nuevo_costo >= mejor["costo"]:
-                continue   # PODA
+                continue   # PRUNE
 
-            asignacion_actual[agente] = candidato
-            resto_candidatos = [c for c in candidatos_restantes if c != candidato]
-            self._explorar(resto_agentes, resto_candidatos, matriz, mejor, asignacion_actual, nuevo_costo)
-            del asignacion_actual[agente]
+            asignation_actual[agent] = candidato
+            resto_candidates = [c for c in remaining_candidates if c != candidato]
+            self.explore(resto_agents, resto_candidates, matrix, mejor, asignation_actual, nuevo_costo)
+            del asignation_actual[agent]
 
-        if len(agentes_restantes) > len(candidatos_restantes):
-            self._explorar(resto_agentes, candidatos_restantes, matriz, mejor, asignacion_actual, costo_actual)
+        if len(agents_restantes) > len(remaining_candidates):
+            self.explore(resto_agents, remaining_candidates, matrix, mejor, asignation_actual, costo_actual)
 
-    def backtrack(self, agentes, candidatos, matriz):
+    def backtrack(self, agents, candidates, matrix):
         """
-        Nombre: backtrack
-        Descripcion: explora combinaciones de asignacion agente por
-                     agente, candidato por candidato (sin repetir
-                     candidato entre agentes), podando ramas cuyo
-                     costo acumulado ya supera la mejor combinacion
-                     completa encontrada hasta el momento. Se detiene
-                     al agotar agentes o candidatos, lo que ocurra
-                     primero -- los agentes sobrantes quedan sin
-                     asignacion de esta capa. Es una funcion PURA:
-                     no modifica a ningun agente, solo regresa datos.
-        Entradas: agentes (list[Firefighter]), candidatos
-                  (list[Candidate]), matriz (dict, salida de
-                  build_cost_matrix)
-        Salidas: dict {Firefighter: Candidate} -> la mejor asignacion
-                 encontrada
-        Uso: llamado por coordinate_turn() despues de construir la
-             matriz de costo.
+        Name: backtrack
+        Description: Explores assignment combinations agent by
+                     agent, candidate by candidate (without repeating
+                     a candidate between agents), pruning branches
+                     whose accumulated cost already exceeds the best
+                     complete combination found so far. Stops when
+                     agents or candidates run out, whichever comes
+                     first -- remaining agents are left unassigned in
+                     this layer. This is a PURE function: it does not
+                     modify any agent, it only returns data.
+        Inputs: agents (list[Firefighter]), candidates
+                (list[Candidate]), matrix (dict, output of
+                build_cost_matrix)
+        Outputs: dict {Firefighter: Candidate} -> the best assignment
+                 found
+        Usage: called by coordinate_turn() after building the cost
+               matrix.
         """
-        mejor = {"costo": float("inf"), "asignacion": {}}
-        self._explorar(agentes, candidatos, matriz, mejor, {}, 0)
-        return mejor["asignacion"]
+        mejor = {"costo": float("inf"), "asignation": {}}
+        self.explore(agents, candidates, matrix, mejor, {}, 0)
+        return mejor["asignation"]
 
-    def apply_assignment(self, asignacion):
+    def apply_assignment(self, asignation):
         """
-        Nombre: apply_assignment
-        Descripcion: escribe la asignacion resultante en cada agente
-                     (objetivo_actual, tipo_objetivo). Es el UNICO
-                     punto de todo el pipeline que modifica a los
-                     agentes directamente -- backtrack()/_explorar()
-                     son funciones puras que solo devuelven datos,
-                     precisamente para poder explorar y descartar
-                     ramas sin efectos secundarios reales.
-        Entradas: asignacion (dict {Firefighter: Candidate})
-        Salidas: ninguna
-        Uso: llamado por coordinate_turn() justo despues de backtrack().
+        Name: apply_assignment
+        Description: Writes the resulting assignment onto each agent
+                     (objective, objective_type). This is the
+                     ONLY point in the whole pipeline that modifies
+                     agents directly -- backtrack()/explore() are
+                     pure functions that only return data, precisely
+                     so branches can be explored and discarded
+                     without real side effects.
+        Inputs: asignation (dict {Firefighter: Candidate})
+        Outputs: none
+        Usage: called by coordinate_turn() right after backtrack().
         """
-        for agente, candidato in asignacion.items():
-            agente.objetivo_actual = candidato.pos
-            agente.tipo_objetivo = candidato.tipo
-            print(f"[Agente {agente.id}] Asignado a {candidato.pos[0]}, {candidato.pos[1]}. Tarea de tipo: {agente.tipo_objetivo}")
+        for agent, candidato in asignation.items():
+            agent.objective = candidato.pos
+            agent.objective_type = candidato.type
+            print(f"[Agent {agent.id}] Asignado a {candidato.pos[0]}, {candidato.pos[1]}. Tarea de type: {agent.objective_type}")
 
+    #------------------------------ COORDINATION ---------------------------------
 
-    def _liberar_comprometidos(self, agentes):
+    def free_up_agents(self, agents):
         """
-        Nombre: _liberar_comprometidos
-        Descripcion: borra objetivo_actual/tipo_objetivo de TODOS los
-                     agentes que no llevan victima y no estan
-                     derribados, sin importar que tan avanzados
-                     esten en su ruta actual. Esto los regresa al
-                     pool de agentes_libres en la MISMA llamada a
-                     coordinate_turn, para que el backtracking los
-                     considere junto con los que ya estaban libres --
-                     una reoptimizacion global, no solo de los pocos
-                     agentes sueltos. No toca a quien carga victima
-                     (esa es prioridad absoluta e individual, ver
-                     Firefighter._act_optimized) ni a quien esta
-                     derribado (su objetivo ya se limpio en
-                     setKnockdown y se resuelve por separado).
-        Entradas: agentes (list[Firefighter])
-        Salidas: ninguna
-        Uso: llamado por coordinate_turn() SOLO en el flanco de
-             subida de triage_factor (False -> True), nunca mientras
-             triage se mantiene activo turno tras turno -- liberar en
-             cada turno causaria "thrashing": agentes que abandonan
-             una tarea casi terminada por otra apenas mejor, una y
-             otra vez, sin terminar nunca nada.
+        Name: free_up_agents
+        Description: Clears objective/objective_type for ALL
+                    agents that are not carrying a victim and are
+                    not knocked down.
+        Inputs: agents (list[Firefighter])
+        Outputs: none
+        Usage: called by coordinate_turn() ONLY on the rising edge of
+                triage_factor (False -> True), never while triage
+                stays active turn after turn -- releasing every turn
+                would cause "thrashing": agents abandoning an almost
+                finished task for a barely better one, over and over,
+                never finishing anything.
         """
-        for agente in agentes:
-            if agente.knockdown or agente.victim:
+        for agent in agents:
+            if agent.knockdown or agent.victim:
                 continue
-            agente.objetivo_actual = None
-            agente.tipo_objetivo = None
+            agent.objective = None
+            agent.objective_type = None
 
-    def necesita_recalcular(self, candidatos, agentes_libres, triage_activo):
+    def trigger_candidates_recal(self, candidates, free_agents, active_triage):
         """
-        Nombre: necesita_recalcular
-        Descripcion: compara el conjunto actual de candidatos y de
-                     agentes sin objetivo contra el ultimo estado
-                     conocido. Solo si alguno cambio vale la pena
-                     volver a correr el backtracking completo --
-                     evita recalcular cada turno sin necesidad.
-        Entradas: candidatos (list[Candidate]), agentes_libres
-                  (list[Firefighter]), triage_activo (bool)
-        Salidas: bool
-        Uso: llamado por coordinate_turn() antes de construir la
-             matriz de costo. ANTES esta funcion solo comparaba
-             posiciones de candidatos e ids de agentes libres -- un
-             cambio de triage_factor (misma celda de fuego, pero
-             ahora con el doble de prioridad) podia pasar
-             completamente inadvertido si el conjunto de celdas en
-             fuego era identico al del turno anterior, dejando el
-             recalculo -- y por lo tanto el propio triage -- sin
-             efecto real. Ahora triage_activo forma parte de la
-             huella comparada.
+        Name: trigger_candidates_recal
+        Description: Compares the current set of candidates and of
+                    objective-less agents against the last known
+                    state. Only if something changed is it worth
+                    rerunning the full backtracking -- avoids
+                    recalculating every turn unnecessarily.
+        Inputs: candidates (list[Candidate]), free_agents
+                (list[Firefighter]), active_triage (bool)
+        Outputs: bool
+        Usage: called by coordinate_turn() before building the cost
+            matrix. BEFORE, this function only compared candidate
+            positions and free-agent ids -- a change in
+            triage_factor (same fire cell, but now with double
+            priority) could go completely unnoticed if the set of
+            cells on fire was identical to the previous turn,
+            leaving the recalculation -- and therefore triage
+            itself -- without real effect. Now active_triage is
+            part of the compared fingerprint.
         """
-        actual_candidatos = set(c.pos for c in candidatos)
-        actual_libres = set(a.unique_id for a in agentes_libres)
+        actual_candidates = set(c.pos for c in candidates)
+        actual_free = set(a.unique_id for a in free_agents)
 
-        cambio = (actual_candidatos != self._ultimo_candidatos or
-                  actual_libres != self._ultimo_libres or
-                  triage_activo != self._triage_previo)
+        trigger = (actual_candidates != self.prev_candidates or
+                actual_free != self.prev_free_agents or
+                active_triage != self.prev_triage)
 
-        self._ultimo_candidatos = actual_candidatos
-        self._ultimo_libres = actual_libres
-        return cambio
+        self.prev_candidates = actual_candidates
+        self.prev_free_agents = actual_free
+        return trigger
 
 
-    def fill_remaining(self, agentes_sin_asignar, candidatos_restantes):
+    def fill_remaining(self, agents_not_assigned, remaining_candidates):
         """
-        Nombre: fill_remaining
-        Descripcion: asigna, sin volver a correr backtracking, el
-                     candidato mas urgente disponible a cada agente
-                     que la asignacion optima dejo sin tarea. Ordena
-                     por prioridad primero (mayor prioridad gana), y
-                     la distancia solo desempata entre candidatos de
-                     la MISMA prioridad. Usa el mismo campo
-                     Candidate.prioridad que build_cost_matrix, para
-                     que ambos mecanismos respondan de forma
-                     consistente a cualquier ajuste de prioridades.
-        Entradas: agentes_sin_asignar (list[Firefighter]),
-                  candidatos_restantes (list[Candidate])
-        Salidas: ninguna
-        Uso: llamado por coordinate_turn() justo despues de
-             apply_assignment(), como red de seguridad de bajo costo.
+        Name: fill_remaining
+        Description: Assigns, without rerunning backtracking, the
+                     most urgent available candidate to each agent
+                     the optimal assignment left without a task.
+                     Sorts by priority first (higher priority wins),
+                     and distance only breaks ties between candidates
+                     of the SAME priority. Uses the same
+                     Candidate.priority field as build_cost_matrix,
+                     so both mechanisms respond consistently to any
+                     priority adjustment.
+        Inputs: agents_not_assigned (list[Firefighter]),
+                remaining_candidates (list[Candidate])
+        Outputs: none
+        Usage: called by coordinate_turn() right after
+               apply_assignment(), as a low-cost safety net.
         """
-        for agente in agentes_sin_asignar:
-            if not candidatos_restantes:
+        for agent in agents_not_assigned:
+            if not remaining_candidates:
                 break
-            elegido = min(
-                candidatos_restantes,
-                key=lambda c: (-c.prioridad, manhattan(agente.pos, c.pos))
+            chosen = min(
+                remaining_candidates,
+                key=lambda c: (-c.priority, manhattan(agent.pos, c.pos))
             )
-            agente.objetivo_actual = elegido.pos
-            agente.tipo_objetivo = elegido.tipo
-            candidatos_restantes.remove(elegido)
+            agent.objective = chosen.pos
+            agent.objective_type = chosen.type
+            remaining_candidates.remove(chosen)
 
 
-    def coordinate_turn(self, agentes, poi, fire, building):
+    def coordinate_turn(self, agents, poi, fire, building):
         """
-        Nombre: coordinate_turn
-        Descripcion: punto de entrada unico del Coordinator para un
-                     turno. Identifica agentes libres (sin objetivo o
-                     con objetivo ya resuelto), genera candidatos,
-                     decide si vale la pena recalcular, y si es asi,
-                     corre matriz de costo + backtracking + aplica la
-                     asignacion resultante.
-        Entradas: agentes (list[Firefighter]), poi (PoiManager),
-                  fire (FireManager), building (BuildingManager)
-        Salidas: ninguna
-        Uso: llamado por GameManager en cada ronda, antes de que los
-             agentes ejecuten su act().
+        Name: coordinate_turn
+        Description: Single entry point of the Coordinator for one
+                     turn. Identifies free agents (with no objective
+                     or with an already-resolved one), generates
+                     candidates, decides whether it is worth
+                     recalculating, and if so, runs cost matrix +
+                     backtracking + applies the resulting assignment.
+        Inputs: agents (list[Firefighter]), poi (PoiManager),
+                fire (FireManager), building (BuildingManager)
+        Outputs: none
+        Usage: called by GameManager on every round, before agents
+               execute their act().
         """
 
-        triage_activo = triage_factor(building, fire) > 1.0
-        dam_actual = building.buildingDam
-        escalo_desde_ultimo_interrupt = dam_actual > self._dam_en_ultimo_interrupt
+        active_triage = triage_factor(building, fire) > 1.0
+        actual_damage = building.buildingDam
+        rised_since_last_interrupt = actual_damage > self.damage_in_last_interrupt
 
-        if triage_activo and (not self._triage_previo or escalo_desde_ultimo_interrupt):
-            # Disparamos en dos casos, no solo el primero:
-            #   (a) flanco de subida -- el tablero ACABA de volverse
-            #       critico, primera vez en esta racha.
-            #   (b) el dano estructural crecio desde la ULTIMA vez que
-            #       liberamos -- como en esta implementacion el dano
-            #       SOLO ocurre por explosiones (ver _propagate/
-            #       shockwave en FireManager), esto equivale a "hubo
-            #       una explosion en algun lado desde que reoptimizamos
-            #       por ultima vez". Es una senal precisa ligada a un
-            #       evento real del tablero, no un umbral que se cruza
-            #       una sola vez y despues queda mudo por el resto de
-            #       la partida mientras todo sigue empeorando -- que
-            #       es exactamente lo que se observo en el log anterior
-            #       (una sola liberacion en el turno 2, ninguna mas en
-            #       30 turnos con explosiones casi constantes).
-            print(f"[Coordinator] Triage/escalada (buildingDam={dam_actual}) -> liberando asignaciones para reoptimizar")
-            self._liberar_comprometidos(agentes)
-            self._dam_en_ultimo_interrupt = dam_actual
+        if active_triage and (not self.prev_triage or rised_since_last_interrupt):
+            # Triggered in two cases:
+            #   (a) rising edge -- the board JUST became critical,
+            #       first time in this streak.
+            #   (b) structural damage grew since the LAST time we
+            #       released -- since in this implementation damage
+            #       ONLY comes from explosions (see _propagate/
+            #       shockwave in FireManager), this is equivalent to
+            #       "an explosion happened somewhere since we last
+            #       reoptimized". It is a precise signal tied to a
+            #       real board event, not a threshold crossed once
+            #       and then silent for the rest of the game while
+            #       everything keeps getting worse -- which is
+            #       exactly what was observed in the earlier log
+            #       (a single release on turn 2, none more in 30
+            #       turns with near-constant explosions).
+            print(f"[Coordinator] Triage (buildingDam={actual_damage}) -> liberando asignationes para reoptimizar")
+            self.free_up_agents(agents)
+            self.damage_in_last_interrupt = actual_damage
 
-        agentes_libres = [
-            a for a in agentes
-            if not a.knockdown and not a.victim and a.objetivo_actual is None
+        free_agents = [
+            a for a in agents
+            if not a.knockdown and not a.victim and a.objective is None
         ]
 
-        if not agentes_libres:
-            self._triage_previo = triage_activo
+        if not free_agents:
+            self.prev_triage = active_triage
             return
 
-        ya_asignados = set(
-            a.objetivo_actual for a in agentes
-            if a.objetivo_actual is not None and a not in agentes_libres
+        assigned_agents = set(
+            a.objective for a in agents
+            if a.objective is not None and a not in free_agents
         )
 
-        candidatos = self.generate_candidates(poi, fire, building, ya_asignados)
+        candidates = self.generate_candidates(poi, fire, building, assigned_agents)
 
-        if not self.necesita_recalcular(candidatos, agentes_libres, triage_activo):
-            self._triage_previo = triage_activo
+        if not self.trigger_candidates_recal(candidates, free_agents, active_triage):
+            self.prev_triage = active_triage
             return
 
-        self._triage_previo = triage_activo
+        self.prev_triage = active_triage
 
-        matriz = self.build_cost_matrix(agentes_libres, candidatos, building, fire)
-        asignacion = self.backtrack(agentes_libres, candidatos, matriz)
-        self.apply_assignment(asignacion)
+        matrix = self.build_cost_matrix(free_agents, candidates, building, fire)
+        asignation = self.backtrack(free_agents, candidates, matrix)
+        self.apply_assignment(asignation)
 
-        sin_asignar = [a for a in agentes_libres if a not in asignacion]
-        candidatos_restantes = [c for c in candidatos if c not in asignacion.values()]
-        self.fill_remaining(sin_asignar, candidatos_restantes)
-
-    # def coordinate_turn(self, agentes, poi, fire, building):
-
-    #     agentes_disponibles = [
-    #         a for a in agentes
-    #         if not a.knockdown and not a.victim
-    #     ]
-
-    #     if not agentes_disponibles:
-    #         return
-
-    #     # Forget every previous assignment
-    #     for agente in agentes_disponibles:
-    #         agente.objetivo_actual = None
-    #         agente.tipo_objetivo = None
-
-    #     candidatos = self.generate_candidates(
-    #         poi,
-    #         fire,
-    #         building,
-    #         set()
-    #     )
-
-    #     matriz = self.build_cost_matrix(
-    #         agentes_disponibles,
-    #         candidatos,
-    #         building,
-    #         fire
-    #     )
-
-    #     asignacion = self.backtrack(
-    #         agentes_disponibles,
-    #         candidatos,
-    #         matriz
-    #     )
-
-    #     self.apply_assignment(asignacion)
-
-    #     sin_asignar = [
-    #         a for a in agentes_disponibles
-    #         if a not in asignacion
-    #     ]
-
-    #     candidatos_restantes = [
-    #         c for c in candidatos
-    #         if c not in asignacion.values()
-    #     ]
-
-    #     self.fill_remaining(
-    #         sin_asignar,
-    #         candidatos_restantes
-    #     )
+        not_assigned = [a for a in free_agents if a not in asignation]
+        remaining_candidates = [c for c in candidates if c not in asignation.values()]
+        self.fill_remaining(not_assigned, remaining_candidates)

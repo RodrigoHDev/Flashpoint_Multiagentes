@@ -1,26 +1,58 @@
+"""
+Title: BuildingManager
+Author: Rodrigo Hurtado
+Description:
+
+Manages the physical structure of the board: the Tile grid
+(walls, doors), the accumulated structural damage level, and the
+query/modification functions for walls used by the rest of the
+system.
+
+Functions:
+SETUP
+__init__
+link
+
+QUERY
+get
+_is_exterior
+getNext
+getDir
+getCost
+
+MODIFICATION
+_setDir
+_sync_neighbor
+damage
+moveDoor
+
+"""
+
 import Tile
 
 WIDTH, HEIGHT = 10, 8
 
 class BuildingManager:
     """
-    Administra la estructura fisica del tablero: el grid de Tiles
-    (paredes, puertas), el nivel de daño acumulado, y las funciones
-    de consulta/modificacion de paredes usadas por el resto del
-    sistema.
+    Manages the physical structure of the board: the Tile grid
+    (walls, doors), the accumulated damage level, and the
+    query/modification functions for walls used by the rest of the
+    system.
     """
 
     _OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 
+    #------------------------------ SETUP ---------------------------------
+
     def __init__(self):
         """
-        Nombre: __init__
-        Descripcion: construye las 80 celdas del tablero (10x8) con
-                     sus paredes/puertas fijas, validadas previamente
-                     por coherencia entre vecinos.
-        Entradas: ninguna
-        Salidas: ninguna (constructor)
-        Uso: instanciado una vez dentro de GameManager.__init__.
+        Name: __init__
+        Description: Builds the 80 cells of the board (10x8) with
+                    their fixed walls/doors, previously validated
+                    for coherence between neighbors.
+        Inputs: none
+        Outputs: none (constructor)
+        Usage: instantiated once inside GameManager.__init__.
         """
         self.TileGrid = [[None for _ in range(HEIGHT)] for _ in range(WIDTH)]
 
@@ -108,41 +140,53 @@ class BuildingManager:
         self.buildingDam = 0
         self.fire = None
         self.poi = None
+
     def link(self, fireManager, poiManager):
         """
-        Nombre: link
-        Descripcion: inyecta las referencias cruzadas necesarias.
-        Entradas: fireManager (FireManager), poiManager (PoiManager)
-        Salidas: ninguna
-        Uso: llamado una vez desde GameManager.__init__.
+        Name: link
+        Description: Injects the necessary cross-references.
+        Inputs: fireManager (FireManager), poiManager (PoiManager)
+        Outputs: none
+        Usage: called once from GameManager.__init__.
         """
         self.fire = fireManager
         self.poi = poiManager
 
+    #------------------------------ QUERY ---------------------------------
+
     def get(self, x, y):
         """
-        Nombre: get
-        Descripcion: regresa los 4 lados de la celda en (x,y).
-        Entradas: x, y (int)
-        Salidas: list[int] -> [up, down, left, right]
-        Uso: llamado por GameManager.capture_snapshot/_tile_to_dict
-             para exportar el estado de paredes.
+        Name: get
+        Description: Returns the 4 sides of the cell at (x, y).
+        Inputs: x, y (int)
+        Outputs: list[int] -> [up, down, left, right]
+        Usage: called by GameManager.capture_snapshot/_tile_to_dict
+            to export the wall state.
         """
         return self.TileGrid[x][y].getTile()
 
     def _is_exterior(self, x, y):
+        """
+        Name: _is_exterior
+        Description: Checks whether a cell lies on the outer ring of
+                    the board (the impassable exterior corridor).
+        Inputs: x, y (int)
+        Outputs: bool
+        Usage: helper used internally by getNext() to block movement
+            through the exterior corridor.
+        """
         return x == 0 or x == WIDTH - 1 or y == 0 or y == HEIGHT - 1
 
     def getNext(self, x, y, dir):
         """
-        Nombre: getNext
-        Descripcion: calcula la coordenada resultante de moverse una
-                     celda en la direccion dada. Regresa None si cae
-                     fuera del tablero.
-        Entradas: x, y (int), dir (str)
-        Salidas: tuple[int,int] o None
-        Uso: llamado extensamente por FireManager, Firefighter y
-             cualquier logica de movimiento/propagacion.
+        Name: getNext
+        Description: Computes the resulting coordinate of moving one
+                    cell in the given direction. Returns None if it
+                    falls outside the board.
+        Inputs: x, y (int), dir (str)
+        Outputs: tuple[int,int] or None
+        Usage: called extensively by FireManager, Firefighter, and
+            any movement/propagation logic.
         """
         if dir == "up":
             nx, ny = x, y - 1
@@ -157,30 +201,58 @@ class BuildingManager:
             return None
 
         if self._is_exterior(x, y) and self._is_exterior(nx, ny):
-            return None   # no se puede caminar por el pasillo exterior
+            return None   # cannot walk through the exterior corridor
 
         return nx, ny
 
     def getDir(self, x, y, dir):
         """
-        Nombre: getDir
-        Descripcion: consulta el valor de un lado especifico de la
-                     celda (que hay entre esta celda y su vecina).
-        Entradas: x, y (int), dir (str)
-        Salidas: int (0-5)
-        Uso: llamado extensamente por FireManager (propagacion) y
-             Firefighter (decidir la accion antes de moverse).
+        Name: getDir
+        Description: Queries the value of a specific side of the
+                    cell (what lies between this cell and its
+                    neighbor).
+        Inputs: x, y (int), dir (str)
+        Outputs: int (0-5)
+        Usage: called extensively by FireManager (propagation) and
+            Firefighter (deciding the action before moving).
         """
         return self.TileGrid[x][y].getDir(dir)
 
+    def getCost(self, x, y, dir):
+        """
+        Name: getCost
+        Description: Returns the movement/pathfinding cost of
+                    crossing the given side of the cell: 1 for
+                    open/door, 2 for closed door, 15 for a 1-life
+                    wall, 40 for a 2-life wall, and infinite for an
+                    indestructible exterior wall.
+        Inputs: x, y (int), dir (str)
+        Outputs: int or float("inf")
+        Usage: called by auxiliars.edge_cost() as the base cost used
+            by A*/Dijkstra.
+        """
+        element = self.getDir(x, y, dir)
+        if element in (0, 3):
+            return 1
+        elif element == 4:
+            return 2
+        elif element == 1:
+            return 15
+        elif element == 2:
+            return 40
+        else:   # element == 5, indestructible exterior
+            return float("inf")
+
+    #------------------------------ MODIFICATION ---------------------------------
+
     def _setDir(self, x, y, dir, value):
         """
-        Nombre: _setDir
-        Descripcion: sobreescribe el valor de un lado especifico de
-                     la celda, delegando al setter correcto de Tile.
-        Entradas: x, y (int), dir (str), value (int, 0-5)
-        Salidas: ninguna
-        Uso: helper interno de damage() y moveDoor().
+        Name: _setDir
+        Description: Overwrites the value of a specific side of the
+                    cell, delegating to the correct Tile setter.
+        Inputs: x, y (int), dir (str), value (int, 0-5)
+        Outputs: none
+        Usage: internal helper for damage() and moveDoor().
         """
         tile = self.TileGrid[x][y]
         if dir == "up":
@@ -194,14 +266,14 @@ class BuildingManager:
 
     def _sync_neighbor(self, x, y, dir):
         """
-        Nombre: _sync_neighbor
-        Descripcion: replica el valor de un lado en la celda vecina
-                     correspondiente (lado opuesto), manteniendo la
-                     coherencia entre celdas adyacentes.
-        Entradas: x, y (int), dir (str)
-        Salidas: ninguna
-        Uso: helper interno de damage() y moveDoor(), llamado despues
-             de modificar un lado.
+        Name: _sync_neighbor
+        Description: Replicates the value of a side onto the
+                    corresponding neighbor cell (opposite side),
+                    keeping adjacent cells coherent.
+        Inputs: x, y (int), dir (str)
+        Outputs: none
+        Usage: internal helper for damage() and moveDoor(), called
+                    after modifying a side.
         """
         next_pos = self.getNext(x, y, dir)
         if next_pos is None:
@@ -213,16 +285,18 @@ class BuildingManager:
 
     def damage(self, x, y, dir) -> bool:
         """
-        Nombre: damage
-        Descripcion: aplica un punto de daño en la direccion dada.
-                     Pared de 2 vidas -> 1 vida; pared de 1 vida o
-                     puerta cerrada -> destruida (0). Sincroniza el
-                     cambio con la celda vecina y acumula buildingDam.
-        Entradas: x, y (int), dir (str)
-        Salidas: bool -> True si se aplico daño, False si el lado no
-                 era daniable (vacio, puerta abierta, o exterior)
-        Uso: llamado por Firefighter.chop() y por
-             FireManager._propagate() durante explosiones.
+        Name: damage
+        Description: Applies one point of damage in the given
+                    direction. A 2-life wall becomes 1-life; a
+                    1-life wall or a closed door is destroyed (0).
+                    Syncs the change with the neighboring cell and
+                    accumulates buildingDam.
+        Inputs: x, y (int), dir (str)
+        Outputs: bool -> True if damage was applied, False if the
+                side was not damageable (empty, open door, or
+                exterior)
+        Usage: called by Firefighter.chop() and by
+            FireManager._propagate() during explosions.
         """
         element = self.getDir(x, y, dir)
 
@@ -241,13 +315,13 @@ class BuildingManager:
 
     def moveDoor(self, x, y, dir) -> bool:
         """
-        Nombre: moveDoor
-        Descripcion: alterna el estado de una puerta entre abierta
-                     (3) y cerrada (4). Sincroniza el cambio con la
-                     celda vecina.
-        Entradas: x, y (int), dir (str)
-        Salidas: bool -> True si habia una puerta ahi, False si no
-        Uso: llamado por Firefighter.openDoor().
+        Name: moveDoor
+        Description: Toggles a door's state between open (3) and
+                    closed (4). Syncs the change with the
+                    neighboring cell.
+        Inputs: x, y (int), dir (str)
+        Outputs: bool -> True if there was a door there, False if not
+        Usage: called by Firefighter.openDoor().
         """
         element = self.getDir(x, y, dir)
         if element == 3:
@@ -258,16 +332,3 @@ class BuildingManager:
             return False
         self._sync_neighbor(x, y, dir)
         return True
-
-    def getCost(self, x, y, dir):
-        element = self.getDir(x, y, dir)
-        if element in (0, 3):
-            return 1
-        elif element == 4:
-            return 2
-        elif element == 1:
-            return 15
-        elif element == 2:
-            return 40
-        else:   # element == 5, exterior indestructible
-            return float("inf")

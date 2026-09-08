@@ -1,36 +1,59 @@
+"""
+Title: Dice
+Author: Rodrigo Hurtado
+Description:
+
+Random coordinate generator within the playable interior of the
+board (x: 1-8, y: 1-6). Used by FireManager and PoiManager to decide
+where new fire falls or where a new POI appears.
+
+Functions:
+CONSTRUCTOR
+__init__
+
+RANDOM GENERATION
+roll
+
+"""
+
 import random
 
 class Dice:
     """
-    Generador de coordenadas aleatorias dentro del interior jugable
-    del tablero (x: 1-8, y: 1-6). Usado por FireManager y PoiManager
-    para decidir donde cae fuego nuevo o donde aparece un POI nuevo.
+    Random coordinate generator within the playable interior of the
+    board (x: 1-8, y: 1-6). Used by FireManager and PoiManager to
+    decide where new fire falls or where a new POI appears.
     """
+
+    #------------------------------ CONSTRUCTOR ---------------------------------
 
     def __init__(self):
         """
-        Nombre: __init__
-        Descripcion: inicializa el dado sin ningun valor rodado aun.
-        Entradas: ninguna
-        Salidas: ninguna (constructor)
-        Uso: instanciado una vez dentro de FireManager.__init__ y
-             una vez dentro de PoiManager.__init__ (cada manager
-             tiene su propio dado independiente).
+        Name: __init__
+        Description: Initializes the dice with no value rolled yet.
+        Inputs: none
+        Outputs: none (constructor)
+        Usage: instantiated once inside FireManager.__init__ and once
+               inside PoiManager.__init__ (each manager has its own
+               independent dice).
         """
         self.x = 0
         self.y = 0
 
+    #------------------------------ RANDOM GENERATION ---------------------------------
+
     def roll(self):
         """
-        Nombre: roll
-        Descripcion: genera un par de coordenadas aleatorias, x entre
-                     1 y 8 inclusive, y entre 1 y 6 inclusive (coincide
-                     con el interior jugable del tablero 10x8).
-        Entradas: ninguna
-        Salidas: tuple[int, int] -> (x, y)
-        Uso: llamado por FireManager.putSmoke() para elegir donde cae
-             fuego/humo, y por PoiManager.set() para elegir donde
-             aparece un nuevo POI.
+        Name: roll
+        Description: Generates a pair of random coordinates, x
+                     between 1 and 8 inclusive, y between 1 and 6
+                     inclusive (matches the playable interior of the
+                     10x8 board).
+        Inputs: none
+        Outputs: tuple[int, int] -> (x, y)
+        Usage: called by FireManager.putSmoke() to choose where
+               fire/smoke falls, and by PoiManager.set() to choose
+               where a new POI appears.
         """
         self.x = random.randint(1, 8)
         self.y = random.randint(1, 6)

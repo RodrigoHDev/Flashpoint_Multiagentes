@@ -1,47 +1,81 @@
+"""
+Title: Tile
+Author: Rodrigo Hurtado
+Description:
+
+Represents a board cell: its 4 walls/doors in the up/down/left/right
+directions, encoded according to the BUILD legend: 0=free,
+1=1-life wall, 2=2-life wall, 3=open door, 4=closed door, 5=
+indestructible exterior wall. Instantiated 80 times inside
+BuildingManager.TileGrid.
+
+Functions:
+CONSTRUCTOR
+__init__
+
+QUERY
+getTile
+getDir
+
+MODIFICATION
+setUp
+setDown
+setLeft
+setRight
+setAll
+
+"""
+
 class Tile:
     """
-    Representa una celda del tablero: sus 4 paredes/puertas en las
-    direcciones up/down/left/right, codificadas segun la leyenda BUILD:
-    0=libre, 1=pared 1 vida, 2=pared 2 vidas, 3=puerta abierta,
-    4=puerta cerrada, 5=pared exterior indestructible.
-    Instanciada 80 veces dentro de BuildingManager.TileGrid.
+    Represents a board cell: its 4 walls/doors in the
+    up/down/left/right directions, encoded according to the BUILD
+    legend: 0=free, 1=1-life wall, 2=2-life wall, 3=open door,
+    4=closed door, 5=indestructible exterior wall. Instantiated 80
+    times inside BuildingManager.TileGrid.
     """
+
+    #------------------------------ CONSTRUCTOR ---------------------------------
 
     def __init__(self, up, down, left, right):
         """
-        Nombre: __init__
-        Descripcion: crea un Tile con sus 4 lados ya definidos.
-        Entradas: up, down, left, right (int, valores 0-5)
-        Salidas: ninguna (constructor)
-        Uso: llamado por BuildingManager.__init__ una vez por cada
-             una de las 80 posiciones del tablero.
+        Name: __init__
+        Description: Creates a Tile with its 4 sides already
+                     defined.
+        Inputs: up, down, left, right (int, values 0-5)
+        Outputs: none (constructor)
+        Usage: called by BuildingManager.__init__ once for each of
+               the 80 board positions.
         """
         self.up = up
         self.down = down
         self.left = left
         self.right = right
 
+    #------------------------------ QUERY ---------------------------------
+
     def getTile(self):
         """
-        Nombre: getTile
-        Descripcion: regresa los 4 lados de la celda en orden fijo.
-        Entradas: ninguna
-        Salidas: list[int] -> [up, down, left, right]
-        Uso: llamado por BuildingManager.get(x,y) y por
-             GameManager._tile_to_dict / capture_snapshot para
-             exportar el estado de paredes.
+        Name: getTile
+        Description: Returns the 4 sides of the cell in fixed order.
+        Inputs: none
+        Outputs: list[int] -> [up, down, left, right]
+        Usage: called by BuildingManager.get(x,y) and by
+               GameManager._tile_to_dict / capture_snapshot to
+               export the wall state.
         """
         return [self.up, self.down, self.left, self.right]
 
     def getDir(self, dir):
         """
-        Nombre: getDir
-        Descripcion: regresa el valor de un lado especifico de la celda.
-        Entradas: dir (str) -> "up" | "down" | "left" | "right"
-        Salidas: int (0-5), el valor de ese lado
-        Uso: llamado por BuildingManager.getDir(x,y,dir), que a su vez
-             es usado por FireManager (propagacion) y Firefighter
-             (decidir la accion antes de avanzar).
+        Name: getDir
+        Description: Returns the value of a specific side of the
+                     cell.
+        Inputs: dir (str) -> "up" | "down" | "left" | "right"
+        Outputs: int (0-5), the value of that side
+        Usage: called by BuildingManager.getDir(x,y,dir), which in
+               turn is used by FireManager (propagation) and
+               Firefighter (deciding the action before advancing).
         """
         directions = {
             "up": self.up,
@@ -51,55 +85,57 @@ class Tile:
         }
         return directions[dir]
 
+    #------------------------------ MODIFICATION ---------------------------------
+
     def setUp(self, up):
         """
-        Nombre: setUp
-        Descripcion: sobreescribe el valor del lado superior.
-        Entradas: up (int, 0-5)
-        Salidas: ninguna
-        Uso: llamado por BuildingManager._setDir cuando dir=="up"
-             (danio de pared o cambio de estado de puerta).
+        Name: setUp
+        Description: Overwrites the value of the upper side.
+        Inputs: up (int, 0-5)
+        Outputs: none
+        Usage: called by BuildingManager._setDir when dir=="up"
+               (wall damage or door state change).
         """
         self.up = up
 
     def setDown(self, down):
         """
-        Nombre: setDown
-        Descripcion: sobreescribe el valor del lado inferior.
-        Entradas: down (int, 0-5)
-        Salidas: ninguna
-        Uso: llamado por BuildingManager._setDir cuando dir=="down".
+        Name: setDown
+        Description: Overwrites the value of the lower side.
+        Inputs: down (int, 0-5)
+        Outputs: none
+        Usage: called by BuildingManager._setDir when dir=="down".
         """
         self.down = down
 
     def setLeft(self, left):
         """
-        Nombre: setLeft
-        Descripcion: sobreescribe el valor del lado izquierdo.
-        Entradas: left (int, 0-5)
-        Salidas: ninguna
-        Uso: llamado por BuildingManager._setDir cuando dir=="left".
+        Name: setLeft
+        Description: Overwrites the value of the left side.
+        Inputs: left (int, 0-5)
+        Outputs: none
+        Usage: called by BuildingManager._setDir when dir=="left".
         """
         self.left = left
 
     def setRight(self, right):
         """
-        Nombre: setRight
-        Descripcion: sobreescribe el valor del lado derecho.
-        Entradas: right (int, 0-5)
-        Salidas: ninguna
-        Uso: llamado por BuildingManager._setDir cuando dir=="right".
+        Name: setRight
+        Description: Overwrites the value of the right side.
+        Inputs: right (int, 0-5)
+        Outputs: none
+        Usage: called by BuildingManager._setDir when dir=="right".
         """
         self.right = right
 
     def setAll(self, up, down, left, right):
         """
-        Nombre: setAll
-        Descripcion: sobreescribe los 4 lados de la celda a la vez.
-        Entradas: up, down, left, right (int, 0-5)
-        Salidas: ninguna
-        Uso: utilitario para inicializacion manual de tableros
-             (no usado en el flujo automatico actual).
+        Name: setAll
+        Description: Overwrites all 4 sides of the cell at once.
+        Inputs: up, down, left, right (int, 0-5)
+        Outputs: none
+        Usage: utility for manual board initialization (not used in
+               the current automatic flow).
         """
         self.up = up
         self.down = down

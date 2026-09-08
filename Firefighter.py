@@ -1,26 +1,82 @@
+"""
+Title: Firefighter
+Author: Rodrigo Hurtado
+Description:
+
+Firefighter agent (Mesa Agent). Holds its own state (position via
+Mesa, direction, knockdown, whether it carries a victim, action
+points) and executes its turn according to the active strategy
+("primitive" for now, "optimized" pending).
+
+Functions:
+CONSTRUCTOR
+__init__
+
+PROPERTIES
+x
+y
+ap
+efficiency
+
+SETUP
+link
+
+TURN LIFECYCLE
+restockAP
+getKnockdown
+setKnockdown
+assignVictim
+act
+
+MOVEMENT & BUILDING ACTIONS
+move
+chop
+openDoor
+
+FIRE ACTIONS
+_extinguish
+turnFireToSmoke
+turnFireToNothing
+turnSmokeToNothing
+_reaccion_fuego_adyacente
+
+ADVANCE
+_advance
+
+STRATEGIES
+_act_primitive
+_act_primitive_astar
+_next_direction_towards
+_act_optimized
+
+"""
+
 import mesa
 from auxiliars import triage_factor, nearest_target, a_star, greedy_direction, get_next_step_direction
 
 
 class Firefighter(mesa.Agent):
     """
-    Agente bombero (Mesa Agent). Guarda su propio estado (posicion
-    via Mesa, direccion, knockdown, si carga victima, puntos de
-    accion) y ejecuta su turno segun la estrategia activa
-    ("primitive" por ahora, "optimized" pendiente).
+    Firefighter agent (Mesa Agent). Holds its own state (position
+    via Mesa, direction, knockdown, whether it carries a victim,
+    action points) and executes its turn according to the active
+    strategy ("primitive" for now, "optimized" pending).
     """
+
+    #------------------------------ CONSTRUCTOR ---------------------------------
 
     def __init__(self, model):
         """
-        Nombre: __init__
-        Descripcion: crea el agente y su estado inicial. La posicion
-                     la asigna Mesa via grid.place_agent(), no aqui.
-                     self.id expone el unique_id de Mesa como entero
-                     simple, usado en los prints de depuracion.
-        Entradas: model (GameManager)
-        Salidas: ninguna (constructor)
-        Uso: llamado por GameManager._crear_agentes() una vez por
-             cada bombero de la partida.
+        Name: __init__
+        Description: Creates the agent and its initial state. The
+                     position is assigned by Mesa via
+                     grid.place_agent(), not here. self.id exposes
+                     Mesa's unique_id as a plain integer, used in
+                     debug prints.
+        Inputs: model (GameManager)
+        Outputs: none (constructor)
+        Usage: called by GameManager._crear_agentes() once per
+               firefighter of the game.
         """
         super().__init__(model)
         self.id = self.unique_id
@@ -29,12 +85,12 @@ class Firefighter(mesa.Agent):
         self.victim = False
         self.actionPoints = 0
 
-        #Estrategias desarrolladas
+        #Developed strategies
         # self.strategy = "primitive"
         # self.strategy = "primitive_astar"
         self.strategy = "optimized"
 
-        self.objetivo_actual = None
+        self.objective = None
         self.tipo_objetivo = None
 
         self._ruta = None
@@ -48,121 +104,119 @@ class Firefighter(mesa.Agent):
         self.fire = None
         self.exits = None
 
+    #------------------------------ PROPERTIES ---------------------------------
+
     @property
     def x(self):
         """
-        Nombre: x (property)
-        Descripcion: expone la coordenada x sin duplicar estado
-                     (deriva de self.pos, que administra Mesa).
-        Entradas: ninguna
-        Salidas: int
-        Uso: leido por GameManager.capture_snapshot/to_dict.
+        Name: x (property)
+        Description: Exposes the x coordinate without duplicating
+                    state (derived from self.pos, which Mesa
+                    manages).
+        Inputs: none
+        Outputs: int
+        Usage: read by GameManager.capture_snapshot/to_dict.
         """
         return self.pos[0]
 
     @property
     def y(self):
         """
-        Nombre: y (property)
-        Descripcion: expone la coordenada y sin duplicar estado.
-        Entradas: ninguna
-        Salidas: int
-        Uso: leido por GameManager.capture_snapshot/to_dict.
+        Name: y (property)
+        Description: Exposes the y coordinate without duplicating
+                    state.
+        Inputs: none
+        Outputs: int
+        Usage: read by GameManager.capture_snapshot/to_dict.
         """
         return self.pos[1]
 
     @property
     def ap(self):
         """
-        Nombre: ap (property)
-        Descripcion: alias de self.actionPoints para compatibilidad
-                     con el formato esperado por GameManager.to_dict.
-        Entradas: ninguna
-        Salidas: int
-        Uso: leido por GameManager.to_dict.
+        Name: ap (property)
+        Description: Alias of self.actionPoints for compatibility
+                    with the format expected by GameManager.to_dict.
+        Inputs: none
+        Outputs: int
+        Usage: read by GameManager.to_dict.
         """
         return self.actionPoints
 
     @property
     def efficiency(self):
         """
-        Nombre: efficiency (property)
-        Descripcion: porcentaje de objetivos completados por cada
-                     paso de movimiento real dado. Un agente que
-                     cumple tareas con pocos movimientos tiene
-                     eficiencia alta; uno que deambula mucho sin
-                     completar objetivos, baja.
-        Entradas: ninguna
-        Salidas: float (0.0 si aun no se ha movido)
-        Uso: leido por el DataCollector de GameManager.
+        Name: efficiency (property)
+        Description: Percentage of objectives completed per real
+                    movement step taken. An agent that completes
+                    tasks with few movements has high efficiency;
+                    one that wanders a lot without completing
+                    objectives has low efficiency.
+        Inputs: none
+        Outputs: float (0.0 if it hasn't moved yet)
+        Usage: read by GameManager's DataCollector.
         """
         if self.steps_taken == 0:
             return 0.0
 
         return round((self.objectives_completed / self.steps_taken)*100,2)
 
+    #------------------------------ SETUP ---------------------------------
 
     def link(self, buildingManager, poiManager, fireManager, exits):
         """
-        Nombre: link
-        Descripcion: inyecta las referencias a los managers y a la
-                     lista de salidas del edificio.
-        Entradas: buildingManager, poiManager, fireManager (managers),
-                  exits (list[tuple[int,int]])
-        Salidas: ninguna
-        Uso: llamado por GameManager._crear_agentes() justo despues
-             de crear cada Firefighter.
+        Name: link
+        Description: Injects the references to the managers and to
+                    the list of building exits.
+        Inputs: buildingManager, poiManager, fireManager (managers),
+                exits (list[tuple[int,int]])
+        Outputs: none
+        Usage: called by GameManager._crear_agentes() right after
+            creating each Firefighter.
         """
         self.building = buildingManager
         self.poi = poiManager
         self.fire = fireManager
         self.exits = exits
 
+    #------------------------------ TURN LIFECYCLE ---------------------------------
+
     def restockAP(self):
         """
-        Nombre: restockAP
-        Descripcion: repone los puntos de accion al maximo (4) al
-                     inicio de cada turno.
-        Entradas: ninguna
-        Salidas: ninguna
-        Uso: llamado por act() al comienzo de cada turno del agente.
+        Name: restockAP
+        Description: Restores action points to the maximum (4) at
+                    the start of each turn.
+        Inputs: none
+        Outputs: none
+        Usage: called by act() at the beginning of each agent turn.
         """
         self.actionPoints = 4
 
     def getKnockdown(self):
         """
-        Nombre: getKnockdown
-        Descripcion: consulta si el agente esta derribado.
-        Entradas: ninguna
-        Salidas: bool
-        Uso: disponible para logica externa (Coordinator futuro,
-             reportes) que necesite filtrar agentes activos.
+        Name: getKnockdown
+        Description: Queries whether the agent is knocked down.
+        Inputs: none
+        Outputs: bool
+        Usage: available for external logic (future Coordinator,
+            reports) that needs to filter active agents.
         """
         return self.knockdown
 
     def setKnockdown(self, value):
         """
-        Nombre: setKnockdown
-        Descripcion: marca al agente como derribado. Si value=True:
-                     si cargaba una victima la cuenta como perdida
-                     (comportamiento ya existente), y respawnea DE
-                     INMEDIATO en la salida mas cercana via
-                     model.grid.move_agent() (no asignacion directa
-                     de self.pos), conservando los AP que tuviera en
-                     ese momento -- la teletransportacion no es una
-                     accion jugada, no consume AP. Limpia cualquier
-                     objetivo asignado por el Coordinator, ya que la
-                     posicion cambio por completo y ese objetivo ya
-                     no aplica. El estado se resuelve al instante --
-                     no bloquea turnos futuros. MERGE: se captura
-                     pos_antes ANTES de la teletransportacion para
-                     que record_step reciba prev_pos/new_pos reales
-                     (antes solo se registraba el tipo de accion sin
-                     posiciones).
-        Entradas: value (bool)
-        Salidas: ninguna
-        Uso: llamado por FireManager.turnToFire() cuando el fuego
-             alcanza la celda del agente.
+        Name: setKnockdown
+        Description: Marks the agent as knocked down. If value=True:
+                     if it was carrying a victim, counts it as lost
+                     (existing behavior), and respawns IMMEDIATELY at
+                     the nearest exit via model.grid.move_agent() (no
+                     direct assignment of self.pos), keeping whatever
+                     AP it had at that moment -- teleportation is not
+                     a played action, it doesn't consume AP.
+        Inputs: value (bool)
+        Outputs: none
+        Usage: called by FireManager.turnToFire() when fire reaches
+               the agent's cell.
         """
         if value:
             if self.victim:
@@ -174,7 +228,7 @@ class Firefighter(mesa.Agent):
             if salida is not None:
                 self.model.grid.move_agent(self, salida)
 
-            self.objetivo_actual = None
+            self.objective = None
             self.tipo_objetivo = None
             self.model.record_step(self.unique_id, "respawn_knockdown", prev_pos=pos_antes, new_pos=self.pos)
 
@@ -182,31 +236,57 @@ class Firefighter(mesa.Agent):
 
     def assignVictim(self):
         """
-        Nombre: assignVictim
-        Descripcion: marca que el agente ahora carga una victima.
-        Entradas: ninguna
-        Salidas: ninguna
-        Uso: llamado por PoiManager.turnOver() cuando el POI revelado
-             resulta ser una victima real.
+        Name: assignVictim
+        Description: Marks that the agent is now carrying a victim.
+        Inputs: none
+        Outputs: none
+        Usage: called by PoiManager.turnOver() when the revealed POI
+               turns out to be a real victim.
         """
         self.victim = True
         print(f"[Agente {self.id}] Have victim at {self.pos[0]}, {self.pos[1]}")
 
+    def act(self):
+        """
+        Name: act
+        Description: Entry point of the agent's turn. Restocks AP,
+                     and if not knocked down, delegates to the active
+                     strategy. This method does NOT change when
+                     optimized behavior is added.
+        Inputs: none
+        Outputs: none
+        Usage: called once per agent, on every iteration of
+               GameManager.step_agent().
+        """
+        self.restockAP()
+        if self.knockdown:
+            return
+
+        if self.strategy == "primitive":
+            self._act_primitive()
+        elif self.strategy == "primitive_astar":
+            self._act_primitive_astar()
+        elif self.strategy == "optimized":
+            self._act_optimized()
+
+    #------------------------------ MOVEMENT & BUILDING ACTIONS ---------------------------------
+
     def move(self, dir):
         """
-        Nombre: move
-        Descripcion: mueve al agente una celda en la direccion dada,
-                     si tiene AP suficientes segun el costo (1 sobre
-                     nada/humo, 2 sobre fuego o cargando victima;
-                     prohibido moverse con victima sobre fuego). El
-                     movimiento se hace via model.grid.move_agent()
-                     (no asignacion directa de self.pos), para que
-                     Mesa mantenga correctamente su estructura interna
-                     de MultiGrid sincronizada con la posicion real.
-        Entradas: dir (str)
-        Salidas: bool -> True si se movio, False si no pudo
-        Uso: llamado por _advance() cuando la celda destino esta
-             libre de fuego/humo activo que requiera limpieza previa.
+        Name: move
+        Description: Moves the agent one cell in the given direction,
+                     if it has enough AP according to the cost (1
+                     over nothing/smoke, 2 over fire or while
+                     carrying a victim; moving with a victim over
+                     fire is forbidden). The movement is done via
+                     model.grid.move_agent() (no direct assignment of
+                     self.pos), so that Mesa keeps its internal
+                     MultiGrid structure correctly synced with the
+                     real position.
+        Inputs: dir (str)
+        Outputs: bool -> True if it moved, False if it couldn't
+        Usage: called by _advance() when the destination cell is
+               free of active fire/smoke requiring prior cleanup.
         """
         next_pos = self.building.getNext(self.pos[0], self.pos[1], dir)
         if next_pos is None:
@@ -231,14 +311,14 @@ class Firefighter(mesa.Agent):
 
     def chop(self, dir):
         """
-        Nombre: chop
-        Descripcion: golpea la pared/puerta en la direccion dada,
-                     costando 2 AP, si BuildingManager.damage confirma
-                     que habia algo daniable ahi.
-        Entradas: dir (str)
-        Salidas: bool -> True si se aplico daño, False si no
-        Uso: llamado por _advance() cuando el lado en esa direccion
-             es una pared (1 o 2 vidas).
+        Name: chop
+        Description: Strikes the wall/door in the given direction,
+                     costing 2 AP, if BuildingManager.damage confirms
+                     there was something damageable there.
+        Inputs: dir (str)
+        Outputs: bool -> True if damage was applied, False if not
+        Usage: called by _advance() when the side in that direction
+               is a wall (1 or 2 lives).
         """
         if self.actionPoints < 2:
             return False
@@ -251,13 +331,13 @@ class Firefighter(mesa.Agent):
 
     def openDoor(self, dir):
         """
-        Nombre: openDoor
-        Descripcion: alterna el estado de una puerta cerrada/abierta
-                     en la direccion dada, costando 1 AP.
-        Entradas: dir (str)
-        Salidas: bool -> True si habia una puerta ahi, False si no
-        Uso: llamado por _advance() cuando el lado en esa direccion
-             es una puerta cerrada.
+        Name: openDoor
+        Description: Toggles the state of a closed/open door in the
+                     given direction, costing 1 AP.
+        Inputs: dir (str)
+        Outputs: bool -> True if there was a door there, False if not
+        Usage: called by _advance() when the side in that direction
+               is a closed door.
         """
         if self.actionPoints < 1:
             return False
@@ -267,18 +347,20 @@ class Firefighter(mesa.Agent):
         self.actionPoints -= 1
         return True
 
+    #------------------------------ FIRE ACTIONS ---------------------------------
+
     def _extinguish(self, dir, cost, requiere, accion):
         """
-        Nombre: _extinguish
-        Descripcion: helper generico para las 3 variantes de apagar
-                     fuego/humo: valida AP, valida que la celda
-                     vecina tenga el estado requerido, y aplica la
-                     accion de FireManager correspondiente.
-        Entradas: dir (str), cost (int), requiere (int, estado de
-                  fuego esperado), accion (funcion de FireManager)
-        Salidas: bool -> True si se aplico, False si no
-        Uso: usado internamente por turnFireToSmoke, turnFireToNothing
-             y turnSmokeToNothing.
+        Name: _extinguish
+        Description: Generic helper for the 3 variants of putting out
+                     fire/smoke: validates AP, validates that the
+                     neighboring cell has the required state, and
+                     applies the corresponding FireManager action.
+        Inputs: dir (str), cost (int), requiere (int, expected fire
+                state), accion (FireManager function)
+        Outputs: bool -> True if applied, False if not
+        Usage: used internally by turnFireToSmoke, turnFireToNothing,
+               and turnSmokeToNothing.
         """
         if self.actionPoints < cost:
             return False
@@ -295,12 +377,14 @@ class Firefighter(mesa.Agent):
 
     def turnFireToSmoke(self, dir):
         """
-        Nombre: turnFireToSmoke
-        Descripcion: reduce fuego a humo en la celda vecina, costo 1 AP.
-        Entradas: dir (str)
-        Salidas: bool
-        Uso: accion manual disponible para el agente (no usada en el
-             ciclo _advance actual, que va directo a turnFireToNothing).
+        Name: turnFireToSmoke
+        Description: Reduces fire to smoke in the neighboring cell,
+                     cost 1 AP.
+        Inputs: dir (str)
+        Outputs: bool
+        Usage: manual action available to the agent (not used in the
+               current _advance cycle, which goes straight to
+               turnFireToNothing).
         """
         if self._extinguish(dir, 1, 2, self.fire.turnToSmoke):
             print(f"[Agente {self.id}] Turned Fire to Smoke at: {self.pos[0]}, {self.pos[1]}")
@@ -309,12 +393,13 @@ class Firefighter(mesa.Agent):
 
     def turnFireToNothing(self, dir):
         """
-        Nombre: turnFireToNothing
-        Descripcion: apaga fuego por completo en la celda vecina,
-                     costo 2 AP.
-        Entradas: dir (str)
-        Salidas: bool
-        Uso: llamado por _advance() cuando la celda destino tiene fuego.
+        Name: turnFireToNothing
+        Description: Fully puts out fire in the neighboring cell,
+                     cost 2 AP.
+        Inputs: dir (str)
+        Outputs: bool
+        Usage: called by _advance() when the destination cell has
+               fire.
         """
         if self._extinguish(dir, 2, 2, self.fire.turnOff):
             print(f"[Agente {self.id}] Turned Fire to Nothing at: {self.pos[0]}, {self.pos[1]}")
@@ -323,94 +408,69 @@ class Firefighter(mesa.Agent):
 
     def turnSmokeToNothing(self, dir):
         """
-        Nombre: turnSmokeToNothing
-        Descripcion: limpia humo en la celda vecina, costo 1 AP.
-        Entradas: dir (str)
-        Salidas: bool
-        Uso: llamado por _advance() cuando la celda destino tiene humo.
+        Name: turnSmokeToNothing
+        Description: Clears smoke in the neighboring cell, cost 1 AP.
+        Inputs: dir (str)
+        Outputs: bool
+        Usage: called by _advance() when the destination cell has
+               smoke.
         """
         if self._extinguish(dir, 1, 1, self.fire.turnOff):
             print(f"[Agente {self.id}] Turned Smoke to Nothing at: {self.pos[0]}, {self.pos[1]}")
             return True
         return False
 
-    def _reaccion_fuego_adyacente(self, dir_planeada):
+    def _reaccion_fuego_adyacente(self, planned_dir):
         """
-        Nombre: _reaccion_fuego_adyacente
-        Descripcion: revisa los 3 lados NO planeados (todos menos
-                     dir_planeada) en busca de fuego activo alcanzable
-                     y, si hay AP de sobra, lo apaga antes de resolver
-                     el paso planeado. _advance() ya apagaba fuego,
-                     pero solo el que estaba justo en la direccion de
-                     viaje -- un agente podia pasar pegado a fuego que
-                     quedaba a un lado sin tocarlo, porque su ruta A*
-                     iba para otro lado. Como el dano estructural en
-                     este juego solo sale de explosiones, y las
-                     explosiones solo pueden salir de fuego que sigue
-                     activo, un fuego adyacente ignorado por puro
-                     accidente de geometria de ruta es exactamente el
-                     tipo de omision que alimenta la siguiente
-                     explosion. Se limita a fuego (no humo) porque es
-                     lo unico que puede explotar, y solo actua UNA vez
-                     por llamada (una celda) para no vaciar el AP del
-                     turno completo en esto en vez de avanzar hacia el
-                     objetivo asignado. MERGE: la celda donde se apaga
-                     el fuego no cambia (el agente no se mueve), asi
-                     que prev_pos == new_pos == (x, y) en el delta
-                     registrado.
-                     ADVERTENCIA para probar despues: si un agente
-                     queda "clavado" turno tras turno apagando el
-                     mismo vecino que se reenciende sin nunca avanzar
-                     hacia su objetivo asignado, hace falta un
-                     cooldown (no repetir la misma celda dos turnos
-                     seguidos) -- de momento no esta puesto porque no
-                     sabemos aun si ocurre en la practica.
-        Entradas: dir_planeada (str) -- la direccion que _advance
-                  iba a resolver de todas formas, para no revisarla
-                  dos veces
-        Salidas: bool -> True si se apago un fuego adyacente (gasto
-                 una de las AP del turno), False si no habia nada que
-                 hacer
-        Uso: llamado por _advance() antes de resolver dir_planeada.
+        Name: _reaccion_fuego_adyacente
+        Description: Checks the 3 NON-planned sides (all except
+                    planned_dir) for reachable active fire and, if
+                    there is AP to spare, puts it out before
+                    resolving the planned step. 
+                    It is limited to fire (not smoke)
+                    because that is the only thing that can explode,
+                    and it only acts ONCE per call (one cell) so as
+                    not to drain the whole turn's AP on this instead
+                    of advancing toward the assigned objective.
+        Inputs: planned_dir (str) -- the direction _advance was
+                going to resolve anyway, so as not to check it twice
+        Outputs: bool -> True if an adjacent fire was put out (spent
+                one of the turn's AP), False if there was nothing to
+                do
+        Usage: called by _advance() before resolving planned_dir.
         """
         if self.actionPoints < 2:
             return False
         x, y = self.pos
         for otra_dir in ("up", "down", "left", "right"):
-            if otra_dir == dir_planeada:
+            if otra_dir == planned_dir:
                 continue
-            vecino = self.building.getNext(x, y, otra_dir)
-            if vecino is None:
+            neighbor = self.building.getNext(x, y, otra_dir)
+            if neighbor is None:
                 continue
-            nx, ny = vecino
+            nx, ny = neighbor
             if self.fire.get(nx, ny) == 2:
                 if self.turnFireToNothing(otra_dir):
                     self.model.record_step(self.unique_id, "extinguishFire", otra_dir, prev_pos=(x, y), new_pos=(x, y))
                     return True
         return False
 
+    #------------------------------ ADVANCE ---------------------------------
+
     def _advance(self, dir):
         """
-        Nombre: _advance
-        Descripcion: resuelve UN obstaculo en la direccion dada:
-                     pared -> chop, puerta cerrada -> abrir, fuego ->
-                     apagar, humo -> limpiar, celda libre -> mover.
-                     Antes de resolver `dir`, reacciona a fuego activo
-                     en cualquiera de los otros 3 lados via
-                     _reaccion_fuego_adyacente() -- ver esa funcion
-                     para el porque. Cada accion exitosa dispara
-                     model.record_step() para que exista un delta por
-                     CADA paso, no solo al final del turno completo
-                     del agente. MERGE: cada llamada ahora pasa
-                     prev_pos/new_pos explicitos -- (x, y) capturado
-                     al inicio para las acciones que no mueven al
-                     agente (chop, openDoor, apagar fuego/humo), y
-                     self.pos (ya actualizado por move()) como
-                     new_pos cuando si hay desplazamiento real.
-        Entradas: dir (str)
-        Salidas: bool -> True si se ejecuto alguna accion, False si
-                 no (sin AP, pared exterior indestructible, etc.)
-        Uso: llamado por _act_primitive() en cada paso del ciclo.
+        Name: _advance
+        Description: Resolves ONE obstacle in the given direction:
+                    wall -> chop, closed door -> open, fire -> put
+                    out, smoke -> clear, free cell -> move. Before
+                    resolving `dir`, it reacts to active fire on any
+                    of the other 3 sides via
+                    Each successful action triggers
+                    model.record_step().
+        Inputs: dir (str)
+        Outputs: bool -> True if some action was executed, False if
+                not (no AP, indestructible exterior wall, etc.)
+        Usage: called by _act_primitive() at every step of the cycle.
         """
         if self._reaccion_fuego_adyacente(dir):
             return True
@@ -456,40 +516,20 @@ class Firefighter(mesa.Agent):
             self.model.record_step(self.unique_id, "move", dir, prev_pos=(x, y), new_pos=self.pos)
         return ok
 
-    def act(self):
-        """
-        Nombre: act
-        Descripcion: punto de entrada del turno del agente. Repone
-                     AP, y si no esta derribado, delega en la
-                     estrategia activa. Este metodo NO cambia cuando
-                     se agregue el comportamiento optimizado.
-        Entradas: ninguna
-        Salidas: ninguna
-        Uso: llamado una vez por agente, por cada iteracion de
-             GameManager.step_agent().
-        """
-        self.restockAP()
-        if self.knockdown:
-            return
-
-        if self.strategy == "primitive":
-            self._act_primitive()
-        elif self.strategy == "primitive_astar":
-            self._act_primitive_astar()
-        elif self.strategy == "optimized":
-            self._act_optimized()
+    #------------------------------ STRATEGIES ---------------------------------
 
     def _act_primitive(self):
         """
-        Nombre: _act_primitive
-        Descripcion: ciclo de comportamiento primitivo. Sin victima:
-                     persigue el POI sin revelar mas cercano (via
-                     poi.pois). Con victima: persigue la salida mas
-                     cercana. Al llegar, resuelve (turnOver/saveVictim)
-                     y busca el siguiente objetivo con el AP restante.
-        Entradas: ninguna
-        Salidas: ninguna
-        Uso: llamado por act() cuando self.strategy == "primitive".
+        Name: _act_primitive
+        Description: Primitive behavior cycle. Without a victim:
+                    chases the nearest unrevealed POI (via
+                    poi.pois). With a victim: chases the nearest
+                    exit. On arrival, resolves (turnOver/saveVictim)
+                    and looks for the next objective with the
+                    remaining AP.
+        Inputs: none
+        Outputs: none
+        Usage: called by act() when self.strategy == "primitive".
         """
         while self.actionPoints > 0:
             targets = self.exits if self.victim else self.poi.pois
@@ -515,16 +555,18 @@ class Firefighter(mesa.Agent):
 
     def _act_primitive_astar(self):
             """
-            Nombre: _act_primitive_astar
-            Descripcion: identico a _act_primitive en la seleccion de
-                        objetivo (POI sin revelar mas cercano, luego
-                        salida mas cercana), pero la direccion de cada
-                        paso viene de A* (ruta real de menor costo en
-                        AP, considerando paredes y fuego), no de
-                        greedy_direction (linea recta ignorando costo).
-            Entradas: ninguna
-            Salidas: ninguna
-            Uso: llamado por act() cuando self.strategy == "primitive_astar".
+            Name: _act_primitive_astar
+            Description: Identical to _act_primitive in objective
+                        selection (nearest unrevealed POI, then
+                        nearest exit), but the direction of each step
+                        comes from A* (real lowest-AP-cost route,
+                        considering walls and fire), not from
+                        greedy_direction (straight line ignoring
+                        cost).
+            Inputs: none
+            Outputs: none
+            Usage: called by act() when
+                self.strategy == "primitive_astar".
             """
             while self.actionPoints > 0:
                 targets = self.exits if self.victim else self.poi.pois
@@ -548,35 +590,25 @@ class Firefighter(mesa.Agent):
                 dir = get_next_step_direction(self.pos, path)
 
                 if dir is None:
-                    break   # sin ruta posible hacia el objetivo actual
+                    break   # no possible route to the current objective
 
                 if not self._advance(dir):
                     break
 
 
-    def _siguiente_direccion_hacia(self, destino):
+    def _next_direction_towards(self, destino):
         """
-        Nombre: _siguiente_direccion_hacia
-        Descripcion: entrega la direccion del proximo paso hacia
-                     `destino`, recalculando A* SOLO cuando hace falta
-                     (destino nuevo respecto a la ultima llamada, o
-                     todavia no hay ruta cacheada) -- no en cada punto
-                     de accion del turno. Antes, _act_optimized llamaba
-                     a_star() en cada iteracion del ciclo while; como
-                     extinguir fuego/humo cambia de inmediato el costo
-                     de esa celda (ver edge_cost en auxiliars.py), un
-                     recalculo a mitad de turno a veces encontraba
-                     "mejor" retroceder un paso que ya se habia dado
-                     -- eso se veia literalmente en el log como
-                     Moving to X / Moving to Y-anterior antes de
-                     actuar, AP gastados en vaiven sin avance real.
-                     Cachear la ruta y solo resincronizarla contra la
-                     posicion real (sin recalcular) elimina ese vaiven.
-        Entradas: destino (tuple[int,int])
-        Salidas: str o None -> direccion del siguiente paso, o None si
-                 no hay ruta posible hacia destino
-        Uso: llamado por _act_optimized(), tanto para la salida
-             (cuando carga victima) como para objetivo_actual.
+        Name: _next_direction_towards
+        Description: Returns the direction of the next step toward
+                    `destino`, recalculating A* ONLY when needed
+                    (destination changed from the last call, or
+                    there is no cached route yet) -- not at every
+                    action point of the turn.
+        Inputs: destino (tuple[int,int])
+        Outputs: str or None -> direction of the next step, or None
+                if there is no possible route to destino
+        Usage: called by _act_optimized(), both for the exit (when
+                carrying a victim) and for objective.
         """
         if destino != self._ruta_destino or not self._ruta:
             self._ruta, _ = a_star(self.pos, destino, self.building, self.fire)
@@ -585,11 +617,6 @@ class Firefighter(mesa.Agent):
         if not self._ruta:
             return None
 
-        # Resincroniza la ruta cacheada contra la posicion real, sin
-        # recalcular: si _advance solo corto una pared o abrio una
-        # puerta (no hubo movimiento), la cabeza de la ruta sigue
-        # siendo self.pos y este while no hace nada; si si hubo
-        # movimiento, descarta las celdas ya recorridas.
         while len(self._ruta) > 1 and self._ruta[0] != self.pos:
             self._ruta.pop(0)
 
@@ -597,16 +624,25 @@ class Firefighter(mesa.Agent):
 
     def _act_optimized(self):
         """
-        (docstring actualizado: se agrega el override de victima -- ignora
-        por completo la asignacion del Coordinator mientras carga una
-        victima, ya que sacarla del edificio es una prioridad absoluta e
-        individual, sin necesidad de coordinacion -- y un respaldo al
-        primitivo cuando el Coordinator no le asigno nada este turno.)
+        Name: _act_optimized
+        Description: Optimized behavior cycle. While carrying a
+                    victim, completely overrides the Coordinator's
+                    assignment -- getting the victim out of the
+                    building is an absolute, individual priority
+                    that needs no coordination. Once the victim is
+                    saved, follows objective as assigned by
+                    the Coordinator, resolving it on arrival. Falls
+                    back to the primitive behavior when the
+                    Coordinator has not assigned anything this turn
+                    (objective is None).
+        Inputs: none
+        Outputs: none
+        Usage: called by act() when self.strategy == "optimized".
         """
         while self.actionPoints > 0:
 
             if self.victim:
-                # PRIORIDAD ABSOLUTA
+                # ABSOLUTE PRIORITY
                 target = nearest_target(self.pos, self.exits)
                 if target is None:
                     break
@@ -618,7 +654,7 @@ class Firefighter(mesa.Agent):
                     self.objectives_completed += 1
                     continue
 
-                dir = self._siguiente_direccion_hacia(target)
+                dir = self._next_direction_towards(target)
                 if dir is None:
                     self._ruta = None
                     break
@@ -627,26 +663,21 @@ class Firefighter(mesa.Agent):
                     break
                 continue
 
-            if self.objetivo_actual is None:
+            if self.objective is None:
                 self._act_primitive()
                 return
 
-            if self.pos == self.objetivo_actual:
+            if self.pos == self.objective:
                 if self.tipo_objetivo == "poi_sin_revelar":
                     self.poi.turnOver(self.pos[0], self.pos[1])
                     self.model.record_step(self.unique_id, "turnOver", prev_pos=self.pos, new_pos=self.pos)
 
-                # fuego_amenaza / fuego_general / humo_general: ya se
-                # resuelven solos durante el trayecto (_advance apaga
-                # fuego/humo automaticamente antes de pisar esa celda),
-                # asi que no hace falta accion adicional aqui.
-
                 self.objectives_completed += 1
-                self.objetivo_actual = None    # <- limpieza explicita, no inferida
+                self.objective = None  
                 self.tipo_objetivo = None
                 continue
 
-            dir = self._siguiente_direccion_hacia(self.objetivo_actual)
+            dir = self._next_direction_towards(self.objective)
             if dir is None:
                 self._ruta = None
                 break
