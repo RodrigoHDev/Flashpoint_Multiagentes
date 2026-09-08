@@ -34,6 +34,13 @@ class GameManager(mesa.Model):
         self.turn = 0
         self.atomic_step_counter = 0 # Initialize a counter for atomic steps
         self.focus = -1
+        # MERGE: lista de deltas ("movements") acumulados desde el
+        # ultimo to_dict(). Reemplaza el esquema anterior de
+        # record_step(), que guardaba un snapshot COMPLETO del
+        # estado en cada paso atomico -- costoso de generar y de
+        # transmitir cuando el consumidor externo (p.ej. Unity) solo
+        # necesita saber que cambio, no todo el tablero de nuevo.
+        self.movements = []
 
         self.buildingManager = BuildingManager.BuildingManager()
         self.fireManager = FireManager.FireManager()
@@ -279,32 +286,44 @@ class GameManager(mesa.Model):
 
         return self.history
 
-    def record_step(self, agent_id, action_type, dir=None):
+    def record_step(self, agent_id, action_type, dir=None, prev_pos=None, new_pos=None):
         """
         Nombre: record_step
         Descripcion: registra UN paso atomico (una sola accion de un
                      agente: mover, cortar, abrir puerta, apagar
                      fuego/humo, revelar POI, salvar victima) -- no
-                     un turno completo. Guarda el estado en
-                     self.step_history y, si self.export_folder esta
-                     configurado, tambien escribe un JSON por paso.
-        Entradas: agent_id (int), action_type (str), dir (str o None)
-        Salidas: dict -> el estado guardado
-        Uso: llamado por Firefighter._advance() y _act_primitive()
-             despues de cada accion exitosa.
+                     un turno completo. MERGE: a diferencia de la
+                     version anterior (que armaba self.to_dict()
+                     completo -- las 80 celdas del tablero -- en
+                     CADA paso atomico), ahora solo arma un DELTA
+                     ligero {step, agentId, type, dir, prevX, prevY,
+                     newX, newY} y lo acumula en self.movements. El
+                     consumidor externo sigue pudiendo reconstruir el
+                     estado completo via to_dict(), que ahora incluye
+                     "movements" y por defecto vacia la lista despues
+                     de leerla (ver flush_movements).
+        Entradas: agent_id (int), action_type (str), dir (str o None),
+                  prev_pos (tuple[int,int] o None, posicion antes de
+                  la accion), new_pos (tuple[int,int] o None,
+                  posicion despues de la accion)
+        Salidas: dict -> el delta registrado
+        Uso: llamado por Firefighter._advance(), _act_primitive(),
+             _act_primitive_astar(), _act_optimized() y
+             setKnockdown() despues de cada accion exitosa.
         """
-        self.atomic_step_counter += 1 # Use the new atomic step counter
-        state = self.to_dict()
-        state["step"] = self.atomic_step_counter
-        state["lastAction"] = {"agentId": agent_id, "type": action_type, "dir": dir}
-
-        # if self.export_folder:
-        #     os.makedirs(self.export_folder, exist_ok=True)
-        #     path = os.path.join(self.export_folder, f"step_{self.step:05d}.json")
-        #     with open(path, "w") as f:
-        #         json.dump(state, f)
-
-        return state
+        self.atomic_step_counter += 1
+        movement = {
+            "step": self.atomic_step_counter,
+            "agentId": agent_id,
+            "type": action_type,
+            "dir": dir,
+            "prevX": prev_pos[0] if prev_pos else None,
+            "prevY": prev_pos[1] if prev_pos else None,
+            "newX": new_pos[0] if new_pos else None,
+            "newY": new_pos[1] if new_pos else None,
+        }
+        self.movements.append(movement)
+        return movement
 
     def _print_turn_summary(self, turn):
         """
@@ -417,21 +436,29 @@ class GameManager(mesa.Model):
         """
         self.focus = -1
 
-    def to_dict(self):
+    def to_dict(self, flush_movements=True):
         """
         Nombre: to_dict
         Descripcion: serializa el estado completo de la partida
                      (turno, dimensiones, daño, victimas, foco, todas
                      las celdas, todos los agentes) a un diccionario
-                     plano, listo para exportar como JSON.
-        Entradas: ninguna
-        Salidas: dict -> estado completo de la partida
+                     plano, listo para exportar como JSON. MERGE:
+                     ahora incluye "movements" (los deltas acumulados
+                     por record_step() desde la ultima llamada a
+                     to_dict). Por defecto (flush_movements=True) la
+                     lista se vacia despues de leerla, para que el
+                     consumidor externo reciba cada delta una sola
+                     vez; pasar flush_movements=False para inspeccion
+                     sin consumir el buffer (p.ej. debugging).
+        Entradas: flush_movements (bool, default True)
+        Salidas: dict -> estado completo de la partida, incluyendo
+                 "movements"
         Uso: pensado como el punto de exportacion hacia un consumidor
              externo (p.ej. Unity via JSON), o para inspeccion manual
              del estado actual en consola.
         """
         tiles = [self._tile_to_dict(x, y) for x in range(WIDTH) for y in range(HEIGHT)]
-        return {
+        result = {
             "turn": self.turn,
             "width": WIDTH,
             "height": HEIGHT,
@@ -451,4 +478,8 @@ class GameManager(mesa.Model):
                 }
                 for a in self.agentsList
             ],
+            "movements": self.movements,
         }
+        if flush_movements:
+            self.movements = []
+        return result

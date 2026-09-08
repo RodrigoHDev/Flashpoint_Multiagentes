@@ -1,5 +1,5 @@
 import mesa
-from auxiliars import triage_factor, nearest_target, a_star, greedy_direction, get_next_step_direction, best_exit_by_cost
+from auxiliars import triage_factor, nearest_target, a_star, greedy_direction, get_next_step_direction
 
 
 class Firefighter(mesa.Agent):
@@ -154,7 +154,11 @@ class Firefighter(mesa.Agent):
                      objetivo asignado por el Coordinator, ya que la
                      posicion cambio por completo y ese objetivo ya
                      no aplica. El estado se resuelve al instante --
-                     no bloquea turnos futuros.
+                     no bloquea turnos futuros. MERGE: se captura
+                     pos_antes ANTES de la teletransportacion para
+                     que record_step reciba prev_pos/new_pos reales
+                     (antes solo se registraba el tipo de accion sin
+                     posiciones).
         Entradas: value (bool)
         Salidas: ninguna
         Uso: llamado por FireManager.turnToFire() cuando el fuego
@@ -165,13 +169,14 @@ class Firefighter(mesa.Agent):
                 self.poi.destroyVictim()
                 self.victim = False
 
+            pos_antes = self.pos
             salida = nearest_target(self.pos, self.exits)
             if salida is not None:
                 self.model.grid.move_agent(self, salida)
 
             self.objetivo_actual = None
             self.tipo_objetivo = None
-            self.model.record_step(self.unique_id, "respawn_knockdown")
+            self.model.record_step(self.unique_id, "respawn_knockdown", prev_pos=pos_antes, new_pos=self.pos)
 
         self.knockdown = False
 
@@ -349,7 +354,10 @@ class Firefighter(mesa.Agent):
                      lo unico que puede explotar, y solo actua UNA vez
                      por llamada (una celda) para no vaciar el AP del
                      turno completo en esto en vez de avanzar hacia el
-                     objetivo asignado.
+                     objetivo asignado. MERGE: la celda donde se apaga
+                     el fuego no cambia (el agente no se mueve), asi
+                     que prev_pos == new_pos == (x, y) en el delta
+                     registrado.
                      ADVERTENCIA para probar despues: si un agente
                      queda "clavado" turno tras turno apagando el
                      mismo vecino que se reenciende sin nunca avanzar
@@ -377,7 +385,7 @@ class Firefighter(mesa.Agent):
             nx, ny = vecino
             if self.fire.get(nx, ny) == 2:
                 if self.turnFireToNothing(otra_dir):
-                    self.model.record_step(self.unique_id, "extinguishFire", otra_dir)
+                    self.model.record_step(self.unique_id, "extinguishFire", otra_dir, prev_pos=(x, y), new_pos=(x, y))
                     return True
         return False
 
@@ -391,9 +399,14 @@ class Firefighter(mesa.Agent):
                      en cualquiera de los otros 3 lados via
                      _reaccion_fuego_adyacente() -- ver esa funcion
                      para el porque. Cada accion exitosa dispara
-                     model.record_step() para que exista un snapshot
-                     por CADA paso, no solo al final del turno completo
-                     del agente.
+                     model.record_step() para que exista un delta por
+                     CADA paso, no solo al final del turno completo
+                     del agente. MERGE: cada llamada ahora pasa
+                     prev_pos/new_pos explicitos -- (x, y) capturado
+                     al inicio para las acciones que no mueven al
+                     agente (chop, openDoor, apagar fuego/humo), y
+                     self.pos (ya actualizado por move()) como
+                     new_pos cuando si hay desplazamiento real.
         Entradas: dir (str)
         Salidas: bool -> True si se ejecuto alguna accion, False si
                  no (sin AP, pared exterior indestructible, etc.)
@@ -411,13 +424,13 @@ class Firefighter(mesa.Agent):
         if element in (1, 2):
             ok = self.chop(dir)
             if ok:
-                self.model.record_step(self.unique_id, "chop", dir)
+                self.model.record_step(self.unique_id, "chop", dir, prev_pos=(x, y), new_pos=(x, y))
             return ok
 
         if element == 4:
             ok = self.openDoor(dir)
             if ok:
-                self.model.record_step(self.unique_id, "openDoor", dir)
+                self.model.record_step(self.unique_id, "openDoor", dir, prev_pos=(x, y), new_pos=(x, y))
             return ok
 
         next_pos = self.building.getNext(x, y, dir)
@@ -429,18 +442,18 @@ class Firefighter(mesa.Agent):
         if fireState == 2:
             ok = self.turnFireToNothing(dir)
             if ok:
-                self.model.record_step(self.unique_id, "extinguishFire", dir)
+                self.model.record_step(self.unique_id, "extinguishFire", dir, prev_pos=(x, y), new_pos=(x, y))
             return ok
 
         if fireState == 1:
             ok = self.turnSmokeToNothing(dir)
             if ok:
-                self.model.record_step(self.unique_id, "extinguishSmoke", dir)
+                self.model.record_step(self.unique_id, "extinguishSmoke", dir, prev_pos=(x, y), new_pos=(x, y))
             return ok
 
         ok = self.move(dir)
         if ok:
-            self.model.record_step(self.unique_id, "move", dir)
+            self.model.record_step(self.unique_id, "move", dir, prev_pos=(x, y), new_pos=self.pos)
         return ok
 
     def act(self):
@@ -490,10 +503,10 @@ class Firefighter(mesa.Agent):
                 if self.victim:
                     self.poi.saveVictim()
                     self.victim = False
-                    self.model.record_step(self.unique_id, "saveVictim")
+                    self.model.record_step(self.unique_id, "saveVictim", prev_pos=self.pos, new_pos=self.pos)
                 else:
                     self.poi.turnOver(self.pos[0], self.pos[1])
-                    self.model.record_step(self.unique_id, "turnOver")
+                    self.model.record_step(self.unique_id, "turnOver", prev_pos=self.pos, new_pos=self.pos)
                 continue
 
             dir = greedy_direction(self.pos, target)
@@ -525,10 +538,10 @@ class Firefighter(mesa.Agent):
                     if self.victim:
                         self.poi.saveVictim()
                         self.victim = False
-                        self.model.record_step(self.unique_id, "saveVictim")
+                        self.model.record_step(self.unique_id, "saveVictim", prev_pos=self.pos, new_pos=self.pos)
                     else:
                         self.poi.turnOver(self.pos[0], self.pos[1])
-                        self.model.record_step(self.unique_id, "turnOver")
+                        self.model.record_step(self.unique_id, "turnOver", prev_pos=self.pos, new_pos=self.pos)
                     continue
 
                 path, cost = a_star(self.pos, target, self.building, self.fire)
@@ -594,14 +607,14 @@ class Firefighter(mesa.Agent):
 
             if self.victim:
                 # PRIORIDAD ABSOLUTA
-                target = best_exit_by_cost(self.pos, self.exits, self.building, self.fire)
+                target = nearest_target(self.pos, self.exits)
                 if target is None:
                     break
 
                 if self.pos == target:
                     self.poi.saveVictim()
                     self.victim = False
-                    self.model.record_step(self.unique_id, "saveVictim")
+                    self.model.record_step(self.unique_id, "saveVictim", prev_pos=self.pos, new_pos=self.pos)
                     self.objectives_completed += 1
                     continue
 
@@ -621,7 +634,7 @@ class Firefighter(mesa.Agent):
             if self.pos == self.objetivo_actual:
                 if self.tipo_objetivo == "poi_sin_revelar":
                     self.poi.turnOver(self.pos[0], self.pos[1])
-                    self.model.record_step(self.unique_id, "turnOver")
+                    self.model.record_step(self.unique_id, "turnOver", prev_pos=self.pos, new_pos=self.pos)
 
                 # fuego_amenaza / fuego_general / humo_general: ya se
                 # resuelven solos durante el trayecto (_advance apaga
