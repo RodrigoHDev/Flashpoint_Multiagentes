@@ -185,18 +185,21 @@ class GameManager(mesa.Model):
         Usage: called by step() and run_limited() once per agent, on
                every round of turns.
         """
-        if self.lose():
-            return True
-        if self.win():
-            return True
+        
 
-        self.coordinator.coordinate_turn(     # <- NEW, before it acts
+        self.coordinator.coordinate_turn(  
           self.agentsList, self.poiManager, self.fireManager, self.buildingManager
         )
 
         agent.act()
         self.fireManager.putSmoke()
         self.poiManager.set()
+
+        if self.lose():
+            return True
+        if self.win():
+            return True
+
         return False
 
     def step(self):
