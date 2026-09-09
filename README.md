@@ -36,6 +36,11 @@ HTTP (`server.py`).
 | `auxiliars.py` | Funciones compartidas: distancias, A*, Dijkstra, `triage_factor`, etc. (no es una clase). |
 | `Dice` / `Tile` | Utilidades de bajo nivel (coordenadas aleatorias, celda individual). |
 
+<br>
+<div align=center>
+<img width="800" height="auto" alt="ClassDiagram_Flashpoint-ClassDiagram_FinalCut drawio" src="https://github.com/user-attachments/assets/2854b2a0-fefe-49e8-af3c-484b3969728e" />
+</div>
+
 ---
 
 ## ¿Qué pasa en cada step?
