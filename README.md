@@ -36,11 +36,6 @@ HTTP (`server.py`).
 | `auxiliars.py` | Funciones compartidas: distancias, A*, Dijkstra, `triage_factor`, etc. (no es una clase). |
 | `Dice` / `Tile` | Utilidades de bajo nivel (coordenadas aleatorias, celda individual). |
 
-<br>
-<div align=center>
-<img width="800" height="auto" alt="ClassDiagram_Flashpoint-ClassDiagram_FinalCut drawio" src="https://github.com/user-attachments/assets/2854b2a0-fefe-49e8-af3c-484b3969728e" />
-</div>
-
 ---
 
 ## ¿Qué pasa en cada step?
@@ -194,9 +189,71 @@ Genera un único JSON `{"frames": [...]}` con un frame por turno, listo para
 reproducirse offline.
 
 ---
+ 
+## Resultados del algoritmo sobre 1000 partidas
+ 
+`main.py` corre un **batch de 1000 partidas independientes** (una por semilla,
+`seed=range(1000)`, estrategia `optimized`, tope de 500 turnos) vía `mesa.batch_run()`
+y produce tres gráficas de resumen. Estas son las estadísticas obtenidas en una corrida
+representativa de ese batch.
+ 
+### Tasa de victoria
+ 
+En promedio, la estrategia `optimized` **gana alrededor del 10% de las partidas**.
+Entre distintas corridas del mismo batch, la tasa observada varía: en los peores casos
+baja hasta **7%**, y en los mejores llega a **15%**. Esta variabilidad es esperable —
+cada partida depende de dónde caen las tiradas de fuego y de qué tan rápido escala el
+daño estructural antes de que el Coordinator pueda reaccionar.
+ 
+### Causa del resultado final
+ 
 
+ 
+La inmensa mayoría de las derrotas (~88% del total) ocurre por **colapso estructural**
+(≥24 puntos de daño), no por pérdida de víctimas — el conteo de partidas perdidas por
+víctimas es prácticamente nulo. Esto sugiere que el cuello de botella actual del
+algoritmo no es la logística de rescate en sí (el Coordinator sí llega a las víctimas a
+tiempo), sino la contención del fuego: las explosiones acumulan daño estructural más
+rápido de lo que el equipo puede apagar fuego general, incluso con el bono de triage.
+ 
+### Duración de las partidas
+ 
+ 
+La mayoría de las partidas termina entre los turnos **50 y 119**, con un pico
+claro en el rango **70-79**. Muy pocas partidas se extienden más allá de 150 turnos o
+terminan antes del turno 30 — es decir, el resultado (ganar o perder) tiende a
+definirse en una ventana relativamente consistente de la partida, ni demasiado
+temprano ni cerca del límite de 500 turnos.
+ 
+### Víctimas salvadas por partida
+ 
+ 
+La distribución de víctimas salvadas (de 0 a 7, el umbral de victoria) está
+concentrada en la zona media: **2 y 3 víctimas salvadas son los resultados más
+comunes**, seguidos de cerca por 1 y 4. Llegar a las 7 necesarias para ganar ocurre en
+una porción visible pero minoritaria de las partidas, coherente con la tasa de
+victoria de ~10% reportada arriba — el equipo suele avanzar bien en rescates parciales,
+pero rara vez sostiene ese ritmo el tiempo suficiente sin que el edificio colapse antes.
+ 
+### Lectura general
+ 
+En conjunto, las tres gráficas apuntan a la misma conclusión: el algoritmo de
+coordinación es efectivo salvando víctimas de forma parcial y consistente, pero el
+daño estructural acumulado por explosiones es, hoy, la principal causa de derrota muy
+por encima de la pérdida directa de víctimas. Cualquier mejora futura al Coordinator
+enfocada en frenar el daño estructural (p. ej. afinar `scan_chain_breaks`,
+`scan_general_fire` o el peso del `triage_factor`) es la palanca con más margen para
+subir la tasa de victoria por encima del ~10-15% actual.
+ 
+---
+ 
 ## Diagrama de clases
-
+ 
 El diagrama de clases completo (relaciones, atributos y métodos de cada clase) se
 encuentra en `ClassDiagram_Flashpoint-ClassDiagram_FinalCut_drawio.png`, incluido en
 el repositorio.
+
+<br>
+<div align=center>
+<img width="800" height="auto" alt="ClassDiagram_Flashpoint-ClassDiagram_FinalCut drawio" src="https://github.com/user-attachments/assets/2854b2a0-fefe-49e8-af3c-484b3969728e" />
+</div>
