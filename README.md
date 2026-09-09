@@ -206,8 +206,12 @@ cada partida depende de dónde caen las tiradas de fuego y de qué tan rápido e
 daño estructural antes de que el Coordinator pueda reaccionar.
  
 ### Causa del resultado final
- 
 
+<div align=center>
+<img width="500" height="auto" alt="Figure_3" src="https://github.com/user-attachments/assets/22067e26-4c53-4e3c-b01c-8b7cbefc1f30" />
+</div>
+
+<br>
  
 La inmensa mayoría de las derrotas (~88% del total) ocurre por **colapso estructural**
 (≥24 puntos de daño), no por pérdida de víctimas — el conteo de partidas perdidas por
@@ -217,8 +221,13 @@ tiempo), sino la contención del fuego: las explosiones acumulan daño estructur
 rápido de lo que el equipo puede apagar fuego general, incluso con el bono de triage.
  
 ### Duración de las partidas
- 
- 
+
+<div align=center>
+<img width="500" height="auto" alt="Figure_2" src="https://github.com/user-attachments/assets/82e23c3b-7c7d-4934-8c07-d5385b4e2e3a" />
+</div>
+
+<br>
+
 La mayoría de las partidas termina entre los turnos **50 y 119**, con un pico
 claro en el rango **70-79**. Muy pocas partidas se extienden más allá de 150 turnos o
 terminan antes del turno 30 — es decir, el resultado (ganar o perder) tiende a
@@ -226,7 +235,12 @@ definirse en una ventana relativamente consistente de la partida, ni demasiado
 temprano ni cerca del límite de 500 turnos.
  
 ### Víctimas salvadas por partida
- 
+
+ <div align=center>
+<img width="500" height="auto" alt="Figure_1" src="https://github.com/user-attachments/assets/90d58e68-69f8-4096-8ab9-46858381ce37" />
+ </div>
+
+<br>
  
 La distribución de víctimas salvadas (de 0 a 7, el umbral de victoria) está
 concentrada en la zona media: **2 y 3 víctimas salvadas son los resultados más
