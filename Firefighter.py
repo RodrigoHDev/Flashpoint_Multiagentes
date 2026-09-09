@@ -639,48 +639,59 @@ class Firefighter(mesa.Agent):
         Outputs: none
         Usage: called by act() when self.strategy == "optimized".
         """
-        while self.actionPoints > 0:
+        while True:
 
-            if self.victim:
-                # ABSOLUTE PRIORITY
-                target = nearest_target(self.pos, self.exits)
-                if target is None:
-                    break
+                if self.victim:
+                    # PRIORIDAD ABSOLUTA
+                    target = nearest_target(self.pos, self.exits)
+                    if target is None:
+                        break
 
-                if self.pos == target:
-                    self.poi.saveVictim()
-                    self.victim = False
-                    self.model.record_step(self.unique_id, "saveVictim", prev_pos=self.pos, new_pos=self.pos)
-                    self.objectives_completed += 1
+                    if self.pos == target:
+                        self.poi.saveVictim()
+                        self.victim = False
+                        self.model.record_step(self.unique_id, "saveVictim")
+                        self.objectives_completed += 1
+                        continue
+
+                    if self.actionPoints <= 0:
+                        break
+
+                    dir = self._siguiente_direccion_hacia(target)
+                    if dir is None:
+                        self._ruta = None
+                        break
+                    if not self._advance(dir):
+                        self._ruta = None
+                        break
                     continue
 
-                dir = self._next_direction_towards(target)
+                if self.objetivo_actual is None:
+                    self._act_primitive()
+                    return
+
+                if self.pos == self.objetivo_actual:
+                    if self.tipo_objetivo == "poi_sin_revelar":
+                        self.poi.turnOver(self.pos[0], self.pos[1])
+                        self.model.record_step(self.unique_id, "turnOver")
+
+                    # fuego_amenaza / fuego_general / humo_general: ya se
+                    # resuelven solos durante el trayecto (_advance apaga
+                    # fuego/humo automaticamente antes de pisar esa celda),
+                    # asi que no hace falta accion adicional aqui.
+
+                    self.objectives_completed += 1
+                    self.objetivo_actual = None    # <- limpieza explicita, no inferida
+                    self.tipo_objetivo = None
+                    continue
+
+                if self.actionPoints <= 0:
+                    break
+
+                dir = self._siguiente_direccion_hacia(self.objetivo_actual)
                 if dir is None:
                     self._ruta = None
                     break
                 if not self._advance(dir):
                     self._ruta = None
                     break
-                continue
-
-            if self.objective is None:
-                self._act_primitive()
-                return
-
-            if self.pos == self.objective:
-                if self.tipo_objetivo == "poi_sin_revelar":
-                    self.poi.turnOver(self.pos[0], self.pos[1])
-                    self.model.record_step(self.unique_id, "turnOver", prev_pos=self.pos, new_pos=self.pos)
-
-                self.objectives_completed += 1
-                self.objective = None  
-                self.tipo_objetivo = None
-                continue
-
-            dir = self._next_direction_towards(self.objective)
-            if dir is None:
-                self._ruta = None
-                break
-            if not self._advance(dir):
-                self._ruta = None
-                break
