@@ -650,14 +650,14 @@ class Firefighter(mesa.Agent):
                     if self.pos == target:
                         self.poi.saveVictim()
                         self.victim = False
-                        self.model.record_step(self.unique_id, "saveVictim")
+                        self.model.record_step(self.unique_id, "saveVictim", prev_pos=self.pos, new_pos=self.pos)
                         self.objectives_completed += 1
                         continue
 
                     if self.actionPoints <= 0:
                         break
 
-                    dir = self._siguiente_direccion_hacia(target)
+                    dir = self._next_direction_towards(target)
                     if dir is None:
                         self._ruta = None
                         break
@@ -666,14 +666,14 @@ class Firefighter(mesa.Agent):
                         break
                     continue
 
-                if self.objetivo_actual is None:
+                if self.objective is None:
                     self._act_primitive()
                     return
 
-                if self.pos == self.objetivo_actual:
+                if self.pos == self.objective:
                     if self.tipo_objetivo == "poi_sin_revelar":
                         self.poi.turnOver(self.pos[0], self.pos[1])
-                        self.model.record_step(self.unique_id, "turnOver")
+                        self.model.record_step(self.unique_id, "turnOver", prev_pos=self.pos, new_pos=self.pos)
 
                     # fuego_amenaza / fuego_general / humo_general: ya se
                     # resuelven solos durante el trayecto (_advance apaga
@@ -681,14 +681,14 @@ class Firefighter(mesa.Agent):
                     # asi que no hace falta accion adicional aqui.
 
                     self.objectives_completed += 1
-                    self.objetivo_actual = None    # <- limpieza explicita, no inferida
+                    self.objective = None    # <- limpieza explicita, no inferida
                     self.tipo_objetivo = None
                     continue
 
                 if self.actionPoints <= 0:
                     break
 
-                dir = self._siguiente_direccion_hacia(self.objetivo_actual)
+                dir = self._next_direction_towards(self.objective)
                 if dir is None:
                     self._ruta = None
                     break
