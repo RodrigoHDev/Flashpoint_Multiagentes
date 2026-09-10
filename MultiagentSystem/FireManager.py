@@ -33,7 +33,7 @@ shockwave
 """
 
 import numpy as np
-import MultiagentSystem.Dice as Dice
+import  Dice as Dice
 
 WIDTH, HEIGHT = 10, 8
 

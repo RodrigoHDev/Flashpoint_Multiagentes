@@ -28,7 +28,7 @@ moveDoor
 
 """
 
-import MultiagentSystem.Tile as Tile
+import Tile as Tile
 
 WIDTH, HEIGHT = 10, 8
 

@@ -52,7 +52,7 @@ _act_optimized
 """
 
 import mesa
-from MultiagentSystem.auxiliars import triage_factor, nearest_target, a_star, greedy_direction, get_next_step_direction
+from  auxiliars import triage_factor, nearest_target, a_star, greedy_direction, get_next_step_direction
 
 
 class Firefighter(mesa.Agent):

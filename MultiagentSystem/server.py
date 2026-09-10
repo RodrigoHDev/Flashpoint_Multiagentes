@@ -34,7 +34,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-import MultiagentSystem.GameManager as GameManager
+import  GameManager as GameManager
 
 app = FastAPI(title="Flashpoint Bridge")
 

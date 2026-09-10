@@ -18,10 +18,10 @@ side satisfies both parsers unmodified):
   "turn": int, "width": int, "height": int,
   "buildingDamage": int, "saved": int, "lost": int, "focus": int,
   "cells": [ {"x", "y", "walls": {"up","down","left","right"},
-              "fire", "poi", "firefighter": bool}, ... ]
+              "fire", "poi", "firefighter": bool}, .. ]
 }
 
-The whole file is {"frames": [frame0, frame1, ...]} -- wrapped in an
+The whole file is {"frames": [frame0, frame1, ..]} -- wrapped in an
 object because Unity's JsonUtility cannot parse a bare top-level JSON
 array.
 
@@ -34,7 +34,7 @@ import argparse
 import json
 import os
 
-import MultiagentSystem.GameManager as GameManager
+import  GameManager as GameManager
 
 
 def frame_from_model(model):

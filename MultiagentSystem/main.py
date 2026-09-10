@@ -29,7 +29,7 @@ CHART 3 - GAMES BY OUTCOME
 
 """
 
-import MultiagentSystem.GameManager as GameManager
+import  GameManager as GameManager
 import mesa
 from mesa.batchrunner import batch_run
 import matplotlib.pyplot as plt
