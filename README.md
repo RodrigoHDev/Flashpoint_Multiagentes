@@ -201,8 +201,8 @@ para apagar también humo, y acumulación de AP entre turnos).
 
 ### Tasa de victoria
 
-En esta corrida, la estrategia `optimized` **ganó ~21.5% de las partidas** (215/1000)
-— más del doble de la tasa reportada en la corrida anterior (~10%). El resto de las
+Con el modelo de estrategia actual, modelo `optimized` **ganó ~21.5% de las partidas** (215/1000)
+— más del doble de la tasa reportada en el modelo anterior (~10%). El resto de las
 partidas (~78.5%) terminó en derrota, y en todas por la misma causa: no se registró
 ninguna partida perdida por víctimas. Este salto es consistente con haber corregido un
 bug que dejaba apagar fuego "a través" de paredes/puertas cerradas — el algoritmo
@@ -211,6 +211,9 @@ se traducía en victorias que en una partida real no se habrían dado.
 
 ### Causa del resultado final
 
+<div align=center>
+<img width="400" height="auto" alt="Causa del resultado final" src="https://github.com/user-attachments/assets/b619418e-efd2-4164-9a04-3666c302a8ad" />
+</div>
 <br>
 
 De las 1000 partidas, **785 se perdieron por colapso estructural** (≥24 puntos de daño)
@@ -223,7 +226,9 @@ alcanza para evitar que la mayoría de los edificios colapse.
 
 ### Duración de las partidas
 
-
+<div align=center>
+<img width="400" height="auto" alt="Duración de pasos de las partidas" src="https://github.com/user-attachments/assets/c9096a9b-39f9-4734-9e75-cee0111f0a54" />
+</div>
 
 <br>
 
@@ -237,7 +242,9 @@ pocas partidas superan los 150 turnos o terminan antes del turno 20.
 
 ### Víctimas salvadas por partida
 
-
+<div align=center>
+<img width="400" height="auto" alt="Victimas salvadas por partida" src="https://github.com/user-attachments/assets/cd3f45b9-6970-415b-b8b4-22dfaf11cb29" />
+</div>
 <br>
 
 Este es el cambio más marcado: la distribución dejó de concentrarse en la zona media
