@@ -1,7 +1,0 @@
-Actualmente se generan tareas por:
-- rescatar poi
-- fuegos generales
-- fuego amenaza
-- romper cadenas
-- punto_de_brecha
-
