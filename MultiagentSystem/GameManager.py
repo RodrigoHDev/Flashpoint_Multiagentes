@@ -45,12 +45,12 @@ clear_focus
 
 """
 
-import FireManager
-import PoiManager
+import MultiagentSystem.FireManager as FireManager
+import MultiagentSystem.PoiManager as PoiManager
 import mesa
-import BuildingManager
-import Coordinator
-import Firefighter
+import MultiagentSystem.BuildingManager as BuildingManager
+import MultiagentSystem.Coordinator as Coordinator
+import MultiagentSystem.Firefighter as Firefighter
 
 WIDTH, HEIGHT = 10, 8
 

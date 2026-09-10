@@ -34,7 +34,7 @@ import argparse
 import json
 import os
 
-import GameManager
+import MultiagentSystem.GameManager as GameManager
 
 
 def frame_from_model(model):

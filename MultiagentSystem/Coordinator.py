@@ -41,9 +41,9 @@ coordinate_turn
 
 """
 
-import Candidate
+import MultiagentSystem.Candidate as Candidate
 import numpy as np
-from auxiliars import triage_factor, a_star, manhattan, FIRE_CANDIDATE_TYPES, dijkstra_from
+from MultiagentSystem.auxiliars import triage_factor, a_star, manhattan, FIRE_CANDIDATE_TYPES, dijkstra_from
 
 WIDTH, HEIGHT = 10, 8
 
