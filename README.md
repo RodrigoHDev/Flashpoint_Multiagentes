@@ -271,6 +271,7 @@ daño de la que ya no se recupera. Seguir bajando esa tasa de colapso temprano �
 ejemplo con las mejoras discutidas sobre `scan_chain_breaks`, `triage_factor` gradual, o
 gestión activa de puertas para compartimentar zonas— sigue siendo la palanca con más
 margen para subir el win rate por encima del ~20% actual.
+
 ---
 
 ## Diagrama de clases
