@@ -194,75 +194,76 @@ reproducirse offline.
 
 `main.py` corre un **batch de 1000 partidas independientes** (una por semilla,
 `seed=range(1000)`, estrategia `optimized`, tope de 500 turnos) vía `mesa.batch_run()`
-y produce tres gráficas de resumen. Estas son las estadísticas obtenidas en una corrida
-representativa de ese batch.
+y produce tres gráficas de resumen. Estas son las estadísticas obtenidas en la corrida
+más reciente del batch, ya con las correcciones al algoritmo aplicadas (validación de
+accesibilidad por pared/puerta en `_reaccion_fuego_adyacente`, extensión de esa función
+para apagar también humo, y acumulación de AP entre turnos).
 
 ### Tasa de victoria
 
-En promedio, la estrategia `optimized` **gana alrededor del 10% de las partidas**.
-Entre distintas corridas del mismo batch, la tasa observada varía: en los peores casos
-baja hasta **7%**, y en los mejores llega a **15%**. Esta variabilidad es esperable —
-cada partida depende de dónde caen las tiradas de fuego y de qué tan rápido escala el
-daño estructural antes de que el Coordinator pueda reaccionar.
+En esta corrida, la estrategia `optimized` **ganó ~21.5% de las partidas** (215/1000)
+— más del doble de la tasa reportada en la corrida anterior (~10%). El resto de las
+partidas (~78.5%) terminó en derrota, y en todas por la misma causa: no se registró
+ninguna partida perdida por víctimas. Este salto es consistente con haber corregido un
+bug que dejaba apagar fuego "a través" de paredes/puertas cerradas — el algoritmo
+anterior sobreestimaba su propia efectividad conteniendo el fuego, y esa sobreestimación
+se traducía en victorias que en una partida real no se habrían dado.
 
 ### Causa del resultado final
- 
-
-<div align=center>
-<img width="500" height="auto" alt="Figure_3" src="https://github.com/user-attachments/assets/22067e26-4c53-4e3c-b01c-8b7cbefc1f30" />
-</div>
 
 <br>
 
-La inmensa mayoría de las derrotas (~88% del total) ocurre por **colapso estructural**
-(≥24 puntos de daño), no por pérdida de víctimas — el conteo de partidas perdidas por
-víctimas es prácticamente nulo. Esto sugiere que el cuello de botella actual del
-algoritmo no es la logística de rescate en sí (el Coordinator sí llega a las víctimas a
-tiempo), sino la contención del fuego: las explosiones acumulan daño estructural más
-rápido de lo que el equipo puede apagar fuego general, incluso con el bono de triage.
+De las 1000 partidas, **785 se perdieron por colapso estructural** (≥24 puntos de daño)
+y **215 se ganaron**; ninguna terminó en derrota por pérdida de víctimas. La proporción
+de derrotas por daño estructural bajó de ~88% a ~78.5% respecto a la corrida anterior,
+pero sigue siendo, por un margen amplio, la causa dominante de derrota. El cuello de
+botella del algoritmo sigue siendo el mismo: la logística de rescate funciona bien (cero
+víctimas perdidas), pero contener el fuego real —sin el bug que lo abarataba— todavía no
+alcanza para evitar que la mayoría de los edificios colapse.
 
 ### Duración de las partidas
- 
- 
 
-<div align=center>
-<img width="500" height="auto" alt="Figure_2" src="https://github.com/user-attachments/assets/82e23c3b-7c7d-4934-8c07-d5385b4e2e3a" />
-</div>
+
 
 <br>
 
-La mayoría de las partidas termina entre los turnos **50 y 119**, con un pico
-claro en el rango **70-79**. Muy pocas partidas se extienden más allá de 150 turnos o
-terminan antes del turno 30 — es decir, el resultado (ganar o perder) tiende a
-definirse en una ventana relativamente consistente de la partida, ni demasiado
-temprano ni cerca del límite de 500 turnos.
+La distribución cambió de forma: el pico ahora está en el rango **50-59** turnos
+(~115 partidas), más temprano que el pico anterior (70-79). Sin embargo, aparece un
+segundo grupo casi tan alto entre **80-99** turnos (~108 y ~104 partidas
+respectivamente), dando una forma **bimodal**: un cúmulo de partidas que se resuelven
+rápido (probablemente derrotas tempranas por colapso estructural) y otro cúmulo de
+partidas más largas (probablemente los rescates que sí llegan a las 7 víctimas). Muy
+pocas partidas superan los 150 turnos o terminan antes del turno 20.
 
 ### Víctimas salvadas por partida
- 
 
- <div align=center>
-<img width="500" height="auto" alt="Figure_1" src="https://github.com/user-attachments/assets/90d58e68-69f8-4096-8ab9-46858381ce37" />
- </div>
 
 <br>
 
-La distribución de víctimas salvadas (de 0 a 7, el umbral de victoria) está
-concentrada en la zona media: **2 y 3 víctimas salvadas son los resultados más
-comunes**, seguidos de cerca por 1 y 4. Llegar a las 7 necesarias para ganar ocurre en
-una porción visible pero minoritaria de las partidas, coherente con la tasa de
-victoria de ~10% reportada arriba — el equipo suele avanzar bien en rescates parciales,
-pero rara vez sostiene ese ritmo el tiempo suficiente sin que el edificio colapse antes.
+Este es el cambio más marcado: la distribución dejó de concentrarse en la zona media
+(2-3 víctimas, como en la corrida anterior) y ahora tiene su **moda en 7 víctimas
+salvadas** (216 partidas, el resultado más común de todos), seguida de 1 víctima (176)
+y 2 víctimas (153). El resultado es una forma más bimodal que antes: las partidas
+tienden a **rescatar casi todo o casi nada**, con menos casos de rescates parciales
+"a medias" (4, 5 o 6 víctimas) que en la corrida anterior. Esto es coherente con la
+duración bimodal de arriba — cuando el equipo logra contener el fuego lo suficiente
+como para sobrevivir los primeros turnos críticos, tiende a terminar el trabajo casi
+por completo; cuando no, colapsa temprano habiendo rescatado poco.
 
 ### Lectura general
 
-En conjunto, las tres gráficas apuntan a la misma conclusión: el algoritmo de
-coordinación es efectivo salvando víctimas de forma parcial y consistente, pero el
-daño estructural acumulado por explosiones es, hoy, la principal causa de derrota muy
-por encima de la pérdida directa de víctimas. Cualquier mejora futura al Coordinator
-enfocada en frenar el daño estructural (p. ej. afinar `scan_chain_breaks`,
-`scan_general_fire` o el peso del `triage_factor`) es la palanca con más margen para
-subir la tasa de victoria por encima del ~10-15% actual.
-
+Las correcciones aplicadas al algoritmo subieron la tasa de victoria de ~10% a ~21.5%
+en esta corrida, confirmando que el bug de accesibilidad estaba inflando artificialmente
+el desempeño reportado antes. El colapso estructural sigue siendo, con amplio margen, la
+principal causa de derrota (ninguna partida se pierde ya por víctimas), pero ahora
+explica una porción menor del total que antes. El patrón de resultados también se volvió
+más polarizado: las partidas tienden a ganarse casi por completo o perderse temprano,
+sugiriendo que existe una ventana crítica (aprox. los primeros 50-60 turnos) donde se
+decide si el equipo logra estabilizar el fuego o el edificio entra en una espiral de
+daño de la que ya no se recupera. Seguir bajando esa tasa de colapso temprano —por
+ejemplo con las mejoras discutidas sobre `scan_chain_breaks`, `triage_factor` gradual, o
+gestión activa de puertas para compartimentar zonas— sigue siendo la palanca con más
+margen para subir el win rate por encima del ~20% actual.
 ---
 
 ## Diagrama de clases
