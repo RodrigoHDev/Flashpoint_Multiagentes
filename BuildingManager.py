@@ -237,9 +237,9 @@ class BuildingManager:
         elif element == 4:
             return 2
         elif element == 1:
-            return 15
-        elif element == 2:
             return 40
+        elif element == 2:
+            return 80
         else:   # element == 5, indestructible exterior
             return float("inf")
 

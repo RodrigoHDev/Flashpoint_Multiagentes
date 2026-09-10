@@ -190,7 +190,7 @@ class Firefighter(mesa.Agent):
         Outputs: none
         Usage: called by act() at the beginning of each agent turn.
         """
-        self.actionPoints = 4
+        self.actionPoints += 4
 
     def getKnockdown(self):
         """
@@ -424,35 +424,58 @@ class Firefighter(mesa.Agent):
         """
         Name: _reaccion_fuego_adyacente
         Description: Checks the 3 NON-planned sides (all except
-                    planned_dir) for reachable active fire and, if
-                    there is AP to spare, puts it out before
-                    resolving the planned step. 
-                    It is limited to fire (not smoke)
-                    because that is the only thing that can explode,
-                    and it only acts ONCE per call (one cell) so as
-                    not to drain the whole turn's AP on this instead
-                    of advancing toward the assigned objective.
+                    planned_dir) for reachable fire/smoke and, if
+                    there is AP to spare, clears it before resolving
+                    the planned step. Only considers a neighbor
+                    reachable through an open side (0) or an open
+                    door (3) -- same criterion used by _advance for
+                    the planned direction -- so it never "reaches
+                    through" a wall or a closed door the way the
+                    previous version accidentally did.
+                    Fire is checked first (costs 2 AP, and is the
+                    only thing that can explode later), smoke second
+                    (costs 1 AP, and left alone it turns into fire on
+                    a future dice roll). It only acts ONCE per call
+                    (one cell, one action) so as not to drain the
+                    whole turn's AP on this instead of advancing
+                    toward the assigned objective.
         Inputs: planned_dir (str) -- the direction _advance was
                 going to resolve anyway, so as not to check it twice
-        Outputs: bool -> True if an adjacent fire was put out (spent
-                one of the turn's AP), False if there was nothing to
-                do
+        Outputs: bool -> True if an adjacent fire or smoke was
+                cleared (spent AP), False if there was nothing to do
         Usage: called by _advance() before resolving planned_dir.
         """
-        if self.actionPoints < 2:
-            return False
         x, y = self.pos
-        for otra_dir in ("up", "down", "left", "right"):
-            if otra_dir == planned_dir:
-                continue
-            neighbor = self.building.getNext(x, y, otra_dir)
-            if neighbor is None:
-                continue
-            nx, ny = neighbor
-            if self.fire.get(nx, ny) == 2:
-                if self.turnFireToNothing(otra_dir):
-                    self.model.record_step(self.unique_id, "extinguishFire", otra_dir, prev_pos=(x, y), new_pos=(x, y))
-                    return True
+        otras_dirs = [d for d in ("up", "down", "left", "right") if d != planned_dir]
+
+        if self.actionPoints >= 2:
+            for otra_dir in otras_dirs:
+                element = self.building.getDir(x, y, otra_dir)
+                if element not in (0, 3):
+                    continue
+                neighbor = self.building.getNext(x, y, otra_dir)
+                if neighbor is None:
+                    continue
+                nx, ny = neighbor
+                if self.fire.get(nx, ny) == 2:
+                    if self.turnFireToNothing(otra_dir):
+                        self.model.record_step(self.unique_id, "extinguishFire", otra_dir, prev_pos=(x, y), new_pos=(x, y))
+                        return True
+
+        if self.actionPoints >= 1:
+            for otra_dir in otras_dirs:
+                element = self.building.getDir(x, y, otra_dir)
+                if element not in (0, 3):
+                    continue
+                neighbor = self.building.getNext(x, y, otra_dir)
+                if neighbor is None:
+                    continue
+                nx, ny = neighbor
+                if self.fire.get(nx, ny) == 1:
+                    if self.turnSmokeToNothing(otra_dir):
+                        self.model.record_step(self.unique_id, "extinguishSmoke", otra_dir, prev_pos=(x, y), new_pos=(x, y))
+                        return True
+
         return False
 
     #------------------------------ ADVANCE ---------------------------------
@@ -635,63 +658,75 @@ class Firefighter(mesa.Agent):
                     back to the primitive behavior when the
                     Coordinator has not assigned anything this turn
                     (objective is None).
+
+                    FIX: arrival checks (reaching the exit while
+                    carrying a victim, or reaching self.objective)
+                    no longer depend on actionPoints being > 0.
+                    Previously the whole loop was gated on
+                    actionPoints > 0, so if the LAST movement of the
+                    turn was the one that landed the agent exactly on
+                    the exit/objective and that movement spent the
+                    last AP, resolving it (saveVictim/turnOver) was
+                    delayed until that same agent's NEXT turn -- the
+                    agent was already visually there, but the counter
+                    (and therefore to_dict()/the JSON frames) didn't
+                    reflect it until a turn later. Resolving an
+                    arrival shouldn't cost AP; only the movement
+                    itself does -- so the AP gate is now applied only
+                    right before the branches that actually act on
+                    the board, not before the arrival check.
         Inputs: none
         Outputs: none
         Usage: called by act() when self.strategy == "optimized".
         """
         while True:
 
-                if self.victim:
-                    # PRIORIDAD ABSOLUTA
-                    target = nearest_target(self.pos, self.exits)
-                    if target is None:
-                        break
+            if self.victim:
+                # ABSOLUTE PRIORITY
+                target = nearest_target(self.pos, self.exits)
+                if target is None:
+                    break
 
-                    if self.pos == target:
-                        self.poi.saveVictim()
-                        self.victim = False
-                        self.model.record_step(self.unique_id, "saveVictim")
-                        self.objectives_completed += 1
-                        continue
-
-                    if self.actionPoints <= 0:
-                        break
-
-                    dir = self._siguiente_direccion_hacia(target)
-                    if dir is None:
-                        self._ruta = None
-                        break
-                    if not self._advance(dir):
-                        self._ruta = None
-                        break
-                    continue
-
-                if self.objetivo_actual is None:
-                    self._act_primitive()
-                    return
-
-                if self.pos == self.objetivo_actual:
-                    if self.tipo_objetivo == "poi_sin_revelar":
-                        self.poi.turnOver(self.pos[0], self.pos[1])
-                        self.model.record_step(self.unique_id, "turnOver")
-
-                    # fuego_amenaza / fuego_general / humo_general: ya se
-                    # resuelven solos durante el trayecto (_advance apaga
-                    # fuego/humo automaticamente antes de pisar esa celda),
-                    # asi que no hace falta accion adicional aqui.
-
+                if self.pos == target:
+                    self.poi.saveVictim()
+                    self.victim = False
+                    self.model.record_step(self.unique_id, "saveVictim", prev_pos=self.pos, new_pos=self.pos)
                     self.objectives_completed += 1
-                    self.objetivo_actual = None    # <- limpieza explicita, no inferida
-                    self.tipo_objetivo = None
                     continue
 
                 if self.actionPoints <= 0:
                     break
 
-                dir = self._siguiente_direccion_hacia(self.objetivo_actual)
+                dir = self._next_direction_towards(target)
                 if dir is None:
                     self._ruta = None
                     break
                 if not self._advance(dir):
                     self._ruta = None
                     break
+                continue
+
+            if self.objective is None:
+                self._act_primitive()
+                return
+
+            if self.pos == self.objective:
+                if self.tipo_objetivo == "poi_sin_revelar":
+                    self.poi.turnOver(self.pos[0], self.pos[1])
+                    self.model.record_step(self.unique_id, "turnOver", prev_pos=self.pos, new_pos=self.pos)
+
+                self.objectives_completed += 1
+                self.objective = None
+                self.tipo_objetivo = None
+                continue
+
+            if self.actionPoints <= 0:
+                break
+
+            dir = self._next_direction_towards(self.objective)
+            if dir is None:
+                self._ruta = None
+                break
+            if not self._advance(dir):
+                self._ruta = None
+                break
